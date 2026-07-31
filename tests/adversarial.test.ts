@@ -200,3 +200,118 @@ test("ADVERSARIAL: the clinician UI does not claim to play recorded audio", asyn
     );
   }
 });
+
+/* ================================================================== */
+/* Milestone 0 — trust gaps closed                                    */
+/* ================================================================== */
+
+test("M0: pilot mode refuses fixture eligibility on MISSING credentials", async () => {
+  process.env.PROLOGUE_MODE = "pilot";
+  await assert.rejects(
+    () => checkEligibility({ firstName: "M", lastName: "D", dateOfBirth: "19920314", memberId: "W1" }),
+    IntegrationUnavailableError,
+    "a payer question must never be answered with synthetic money in pilot mode"
+  );
+});
+
+test("M0: pilot mode refuses fixture eligibility on a FAILED request", async () => {
+  process.env.PROLOGUE_MODE = "pilot";
+  process.env.STEDI_API_KEY = "test-key";
+  process.env.STEDI_ELIGIBILITY_URL = "http://127.0.0.1:1/nope"; // guaranteed connection failure
+  // Re-import so the module reads the patched env.
+  const mod = await import(`../lib/stedi?bust=${Date.now()}`);
+  await assert.rejects(
+    () => mod.checkEligibility({ firstName: "M", lastName: "D", dateOfBirth: "19920314", memberId: "W1" }),
+    /Stedi is unavailable/,
+    "a timeout or rejected request is an integration failure, not fixture money"
+  );
+  delete process.env.STEDI_API_KEY;
+  delete process.env.STEDI_ELIGIBILITY_URL;
+});
+
+test("M0: demo mode still degrades, but carries the failure detail", async () => {
+  process.env.STEDI_API_KEY = "test-key";
+  process.env.STEDI_ELIGIBILITY_URL = "http://127.0.0.1:1/nope";
+  const mod = await import(`../lib/stedi?bust2=${Date.now()}`);
+  const r = await mod.checkEligibility({ firstName: "M", lastName: "D", dateOfBirth: "19920314", memberId: "W1" });
+  assert.equal(r.simulated, true, "a failed live call must be labelled simulated");
+  assert.ok(r.detail, "the reason for degradation must be recorded");
+  delete process.env.STEDI_API_KEY;
+  delete process.env.STEDI_ELIGIBILITY_URL;
+});
+
+test("M0: GET /api/session is side-effect free — claiming is explicit", async () => {
+  const { PrologueSession: PS } = await import("../lib/session");
+  const { upsertFromMap: up, getSession: get, transition: tr, __clear: clr } = await import("../lib/store");
+  clr();
+  const s = new PS("readonly", "en");
+  s.attachChart(chartSlice(), 1, true);
+  s.grantConsent();
+  s.patientSaid("my mouth is sore", 60);
+  up(s.map, { patientId: "p" });
+
+  assert.equal(get("readonly")!.state, "ready_for_review");
+  // Simulate repeated reads. None of them may claim the case.
+  for (let i = 0; i < 5; i++) assert.equal(get("readonly")!.state, "ready_for_review");
+
+  // Only a deliberate action transitions it.
+  tr("readonly", "under_review");
+  assert.equal(get("readonly")!.state, "under_review");
+  clr();
+});
+
+test("M0: a receipt never carries a resource id for a write that did not happen", async () => {
+  const { approveIntake: ai, promotableItems: pi } = await import("../lib/intake");
+  const { upsertFromMap: up, transition: tr, __clear: clr } = await import("../lib/store");
+  const { PrologueSession: PS } = await import("../lib/session");
+  clr();
+  const s = new PS("noid", "en");
+  s.attachChart(chartSlice(), 1, true);
+  s.grantConsent();
+  s.patientSaid("rash four days", 60);
+  s.patientSaid("my mouth is sore", 90);
+  const session = up(s.map, { patientId: "p" });
+  tr("noid", "under_review");
+
+  const r = await ai(session, {
+    sessionId: "noid",
+    clinicianId: "practitioner-osei",
+    decisions: pi(session.map).map((i) => ({ itemId: i.id, decision: "approve" as const })),
+  });
+
+  assert.equal(r.signature.fullyPersisted, false);
+  assert.equal(r.signature.partial, false);
+  for (const w of r.signature.writes) {
+    assert.equal(w.status, "not-attempted", `${w.resourceType} should not be claimed`);
+    assert.equal(w.id, undefined, `${w.resourceType} must have no id`);
+    assert.ok(!JSON.stringify(w).includes("local/"), "no placeholder id may masquerade as a resource");
+  }
+  // Every expected resource type is still accounted for.
+  const types = new Set(r.signature.writes.map((w) => w.resourceType));
+  for (const t of ["Composition", "Provenance", "AuditEvent"]) {
+    assert.ok(types.has(t), `${t} must appear in the receipt with an honest status`);
+  }
+  clr();
+});
+
+test("M0: the clinician UI makes no unconditional persistence claim", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync("app/clinician/page.tsx", "utf8");
+  assert.ok(
+    !/Provenance \+ AuditEvent written/.test(src),
+    "the UI must not assert a write it cannot verify"
+  );
+  // Every persistence statement must be driven by the server receipt.
+  assert.ok(src.includes("receipt.writes"), "the receipt must render per-resource server results");
+  assert.ok(src.includes("No durable FHIR write was attempted"), "a fixture signature must say so");
+  assert.ok(src.includes("PARTIAL"), "partial success must be visible and described as recoverable");
+});
+
+test("M0: pilot mode makes browser finalization visibly unavailable", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync("app/clinician/page.tsx", "utf8");
+  assert.ok(
+    src.includes('mode === "pilot"') && src.includes("roster authorization is demo-only"),
+    "pilot mode must disable browser finalization and say why"
+  );
+});

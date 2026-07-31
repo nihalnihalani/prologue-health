@@ -16,6 +16,7 @@
 import type { Benefits } from "./types";
 import { fixtureBenefits } from "./fixtures";
 import type { Timed } from "./medplum";
+import { assertFixtureAllowed } from "./runtime";
 
 const apiKey = process.env.STEDI_API_KEY;
 const endpoint =
@@ -109,9 +110,10 @@ export async function checkEligibility(input: EligibilityInput): Promise<Timed<B
   const t0 = performance.now();
 
   if (!stediConfigured) {
+    // Pilot mode must never answer a payer question with synthetic money.
+    assertFixtureAllowed("Stedi", "no credentials configured");
     // Deliberate small delay so the UI's async handling is exercised on the
-    // fallback path too — a payer round trip is never instant, and the demo
-    // should behave the same either way.
+    // fallback path too — a payer round trip is never instant.
     await new Promise((r) => setTimeout(r, 420));
     return {
       data: { ...fixtureBenefits, simulated: true },
@@ -145,15 +147,22 @@ export async function checkEligibility(input: EligibilityInput): Promise<Timed<B
     }
 
     const json = await res.json();
+    // Malformed but HTTP-200 responses are a failure, not "active coverage".
+    if (!json || typeof json !== "object") {
+      throw new Error("Stedi returned a non-object payload");
+    }
     return { data: parse271(json), ms: Math.round(performance.now() - t0), simulated: false };
   } catch (err) {
-    // Degrade honestly: fall back to the fixture and mark it simulated so the UI
-    // can say so out loud. We never fabricate a payer response.
-    console.error("[stedi] eligibility failed, serving fixture:", (err as Error)?.message);
+    const detail = (err as Error)?.message;
+    console.error("[stedi] eligibility failed:", detail);
+    // A rejected request, a timeout, or malformed data is an INTEGRATION
+    // FAILURE. In pilot mode it surfaces; it never becomes fixture money.
+    assertFixtureAllowed("Stedi", detail);
     return {
       data: { ...fixtureBenefits, simulated: true },
       ms: Math.round(performance.now() - t0),
       simulated: true,
+      detail,
     };
   }
 }

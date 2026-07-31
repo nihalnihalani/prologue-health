@@ -110,8 +110,14 @@ test("GOLDEN: approval finalizes server-side and records a signature", async () 
   assert.equal(r.idempotentReplay, false);
   assert.equal(r.signature.by, "Dr. Amara Osei");
   assert.ok(r.signature.approvedItemIds.length > 0);
-  assert.ok(r.signature.provenanceId, "Provenance must be recorded, not just returned");
-  assert.ok(r.signature.auditEventId, "AuditEvent must be recorded");
+  // In demo mode nothing persists, and the receipt must SAY so rather than
+  // emitting placeholder ids as though they were FHIR resources.
+  assert.equal(r.signature.fullyPersisted, false);
+  assert.ok(r.signature.writes.length > 0, "per-resource write receipts are required");
+  assert.ok(
+    r.signature.writes.every((w) => w.status === "not-attempted" && !w.id),
+    "unconfigured Medplum must report not-attempted with no id"
+  );
   assert.equal(session.map.compositionStatus, "final");
 });
 
@@ -148,8 +154,7 @@ test("SAFETY: writes to a signed session are ignored, not applied", () => {
   session.signature = {
     by: "Dr. Amara Osei", at: new Date().toISOString(),
     approvedItemIds: [], rejectedItemIds: [],
-    compositionId: "c", provenanceId: "p", auditEventId: "a",
-    persisted: false, editedItemIds: [], origin: "fixture",
+    editedItemIds: [], writes: [], fullyPersisted: false, partial: false, origin: "fixture",
   };
 
   const tampered = structuredClone(session.map);
@@ -285,8 +290,15 @@ test("demo mode signs but labels the record as a fixture", async () => {
     sessionId: "demo-ok", clinicianId: "practitioner-osei", decisions: approveAll(session),
   });
   assert.equal(r.signature.origin, "fixture");
-  assert.equal(r.signature.persisted, false);
-  assert.ok(r.warnings.some((w) => /fixture/i.test(w)), "degradation must be stated, not hidden");
+  assert.equal(r.signature.fullyPersisted, false);
+  assert.ok(
+    r.warnings.some((w) => /NOTHING was persisted|not configured/i.test(w)),
+    "degradation must be stated, not hidden"
+  );
+  assert.ok(
+    !r.signature.writes.some((w) => w.id),
+    "a demo signature must not carry any resource id"
+  );
 });
 
 /* ---------------- queue ---------------- */

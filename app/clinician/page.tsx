@@ -22,6 +22,13 @@ export default function ClinicianPage() {
   const [mode, setMode] = useState<string>("demo");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [signErr, setSignErr] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<null | {
+    by: string; at: string;
+    approvedItemIds: string[]; editedItemIds: string[]; rejectedItemIds: string[];
+    writes: { resourceType: string; id?: string; status: string; origin: string; error?: string }[];
+    fullyPersisted: boolean; partial: boolean; origin: string;
+  }>(null);
+  const [replayed, setReplayed] = useState(false);
 
   const load = useCallback(async () => {
     // Server is authoritative. localStorage is a same-browser fallback only, and
@@ -110,6 +117,8 @@ export default function ClinicianPage() {
       }
 
       setWarnings(j.warnings ?? []);
+      setReceipt(j.signature);
+      setReplayed(Boolean(j.idempotentReplay));
       setSigned({ at: j.signature.at, by: j.signature.by });
       setState(j.state);
       // Reload canonical state rather than constructing a final map locally.
@@ -276,7 +285,7 @@ export default function ClinicianPage() {
         </div>
         <div className="mono muted" style={{ fontSize: 11.5 }}>
           {signed
-            ? `signed by ${signed.by} · Provenance + AuditEvent written`
+            ? `signed by ${signed.by}`
             : undecided > 0
               ? `${undecided} item${undecided === 1 ? "" : "s"} still need a decision — nothing has entered the chart`
               : `${decisions.filter((d) => d.decision === "reject").length} rejected · ${decisions.filter((d) => d.decision === "approve").length} approved — not yet signed`}
@@ -291,12 +300,66 @@ export default function ClinicianPage() {
             ⚠ {w}
           </div>
         ))}
+
+        {receipt && (
+          <div style={{ flexBasis: "100%", marginTop: 8, borderTop: "1px solid var(--line-soft)", paddingTop: 10 }}>
+            <div className="mono" style={{ fontSize: 10.5, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 6 }}>
+              Receipt {replayed && "· idempotent replay"}
+            </div>
+            <div className="mono" style={{ fontSize: 11.5, marginBottom: 8 }}>
+              {receipt.approvedItemIds.length} approved · {receipt.editedItemIds.length} edited ·{" "}
+              {receipt.rejectedItemIds.length} rejected · signed by {receipt.by}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              {receipt.writes.map((w, n) => (
+                <div key={`${w.resourceType}-${n}`} className="mono" style={{ fontSize: 11 }}>
+                  <span
+                    style={{
+                      color:
+                        w.status === "written" ? "var(--accent)" : w.status === "failed" ? "var(--crit)" : "var(--ink-3)",
+                    }}
+                  >
+                    {w.status === "written" ? "✓" : w.status === "failed" ? "✕" : "—"} {w.resourceType}
+                  </span>{" "}
+                  <span className="muted">
+                    {w.id ? `${w.resourceType}/${w.id}` : w.status === "written" ? "(no id returned)" : w.status}
+                    {" · "}
+                    {w.origin}
+                    {w.error && ` · ${w.error}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {receipt.partial && (
+              <div className="mono" style={{ fontSize: 11, color: "var(--crit)", marginTop: 6 }}>
+                ✕ PARTIAL — some writes landed and others did not. This is recoverable; retry is safe.
+              </div>
+            )}
+            {!receipt.fullyPersisted && !receipt.partial && (
+              <div className="mono" style={{ fontSize: 11, color: "var(--warn)", marginTop: 6 }}>
+                ⚠ No durable FHIR write was attempted. This signature exists in session state only.
+              </div>
+            )}
+          </div>
+        )}
+        {mode === "pilot" && !isFinal && (
+          <div className="mono" style={{ fontSize: 11, color: "var(--warn)", flexBasis: "100%" }}>
+            ⚠ Pilot mode requires server-verified clinician identity. Browser-initiated finalization
+            is unavailable until real authentication is configured — roster authorization is demo-only.
+          </div>
+        )}
         <button
           className="btn primary big"
           style={{ marginLeft: "auto" }}
           onClick={sign}
-          disabled={signing || isFinal || undecided > 0}
-          title={undecided > 0 ? `${undecided} item(s) still need a decision` : undefined}
+          disabled={signing || isFinal || undecided > 0 || mode === "pilot"}
+          title={
+            mode === "pilot"
+              ? "Pilot mode requires server-verified identity"
+              : undecided > 0
+                ? `${undecided} item(s) still need a decision`
+                : undefined
+          }
         >
           {isFinal ? "Signed ✓" : signing ? "Signing…" : "Approve & sign"}
         </button>

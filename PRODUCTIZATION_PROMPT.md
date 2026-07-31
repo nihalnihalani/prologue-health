@@ -2,19 +2,23 @@
 
 Use this prompt with Claude Code from the repository root.
 
+For hackathon execution, use `HACKATHON_MASTER_PROMPT.md` instead. This prompt is the post-hackathon path toward a real clinic pilot.
+
 ---
 
 You are the product and engineering lead for Prologue. Turn the current hackathon demo into a credible pilot-ready product for outpatient clinics while preserving the behavior that makes it valuable: a chart-aware pre-visit conversation that surfaces useful, source-linked information for a clinician to review.
 
 Start by reading `CLAUDE.md`, then use progressive disclosure. Read `README.md` for the product and safety model, `RUNNING.md` for the implementation's real/simulated boundaries, the relevant parts of `docs/01-PRODUCT-DESIGN.md`, and the tests that encode affected invariants. Inspect the actual implementation before trusting an aspirational document.
 
-The current app proves the concept, but it is still centered on one synthetic patient. The highest-value productization work is to replace that demo-shaped control plane with a real, server-authoritative workflow:
+The current app proves the concept, but it is still centered on one synthetic patient. A first server-authority phase already introduced patient-keyed session envelopes, lifecycle states, a queue endpoint, explicit decisions, draft projection, runtime modes, and canonical approval. Audit the current revision and extend those mechanisms; do not rebuild them from this older checklist.
 
-1. Durable, patient-keyed intake sessions connected to appointments and users, with explicit lifecycle states.
-2. A multi-patient clinician queue with assignment, status, urgency, and a stable session detail route.
-3. A secure approval transaction that reloads canonical server state, validates the clinician and selected items, persists accepted/rejected decisions, performs the real preliminary-to-final FHIR transition, and records `Provenance` and `AuditEvent`. It must be idempotent and must not trust a client-supplied final state.
-4. Real draft persistence for the appropriate FHIR resources (`Consent`, `QuestionnaireResponse`, `Observation`, `DetectedIssue`, `MedicationStatement`, `Composition`, and `Task`) without letting the agent create a `Condition`.
-5. Explicit runtime modes: synthetic demo mode may fall back to labeled fixtures; pilot/production mode must surface integration failure and never silently substitute synthetic clinical or payer data.
+The highest-value productization work is to replace the remaining demo-shaped control plane with a durable, authenticated workflow:
+
+1. Replace the in-process store with durable, patient-keyed intake sessions connected to appointments and authenticated users while preserving explicit lifecycle states and terminal records.
+2. Connect the existing queue API to a multi-patient clinician queue with assignment, explicit claim, status, urgency, and stable session detail routes. Reads must not mutate workflow state.
+3. Make approval recoverable across partial external writes, verify every claimed resource receipt, and make idempotency durable rather than process-local. Keep canonical reload, explicit decisions, clinician authority, preliminary-to-final transition, `Provenance`, and `AuditEvent`.
+4. Move requested `Task` creation to escalation time, persist the appropriate FHIR drafts, and expose real per-resource origin and status without letting the agent create a `Condition`.
+5. Enforce runtime modes across every adapter. Demo mode may use labeled fixtures; pilot mode surfaces integration failure and never silently substitutes synthetic clinical or payer data.
 
 Use your judgment to refine the order after examining the code. Build the smallest coherent vertical slice that makes the product meaningfully more deployable; do not scatter placeholders across all five areas. Prefer extending the existing Next.js/Medplum architecture unless evidence shows a different component is necessary.
 
@@ -48,4 +52,3 @@ Finish with:
 5. The next three product bets, ranked by expected customer value versus clinical and engineering risk.
 
 Do not optimize for adding the most features. Optimize for a trustworthy workflow a real clinic can trial, with evidence that it saves clinician preparation time without hiding uncertainty or moving clinical authority away from the clinician.
-
