@@ -1,13 +1,62 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, type Variants } from "framer-motion";
 import { User, ClipboardList, ShieldAlert, Check, X, ArrowLeft, Volume2, ShieldCheck, Database, FileText } from "lucide-react";
 import type { StoryMap, StoryItem } from "@/lib/types";
 import { Timeline, ItemRow, Reconciliation, BenefitsCard, EscalationCard } from "@/components/StoryMap";
 
 const STORE_KEY = "prologue:storymap";
+
+/**
+ * The orchestrating container must never animate its OWN opacity.
+ *
+ * This element exists only to stagger its children, so its variant was written
+ * with just a `transition` and no visual property. framer-motion still wrote
+ * `opacity: 0` onto it and then had nothing to animate towards, so the element
+ * froze part-way — measured stuck at 0.08 — and took the entire clinician view
+ * down with it. The page was fully present in the DOM and simply invisible,
+ * which is why it read as a routing or data failure rather than a styling one.
+ *
+ * Both variants therefore pin the container at opacity 1 and let the children
+ * (cardVariants) do the fading. A container cannot hide the page it is only
+ * supposed to be sequencing.
+ */
+const CONTAINER_VARIANTS: Variants = {
+  hidden: { opacity: 1 },
+  visible: { opacity: 1, transition: { staggerChildren: 0.08 } },
+};
+
+/**
+ * Variants MUST be module-level, not rebuilt inside the component.
+ *
+ * These cards carry no `initial`/`animate` of their own; they inherit the
+ * container's variant label. This object used to be created fresh on every
+ * render, and the page re-fetches the session every 1.5s — so each poll handed
+ * framer-motion a new variants identity and restarted the enter animation from
+ * `hidden`. The cards never finished fading in and sat permanently at opacity 0.
+ *
+ * A stable reference lets the animation run once and stay finished.
+ *
+ * Each card also drives its own `initial`/`animate` rather than inheriting the
+ * container's label. Relying on propagation left them parked at `hidden`, and
+ * app/patient/page.tsx — the view that always rendered correctly — already
+ * declares them explicitly. Matching it removes the dependence on a chain that
+ * silently costs the clinician the entire brief when it breaks.
+ */
+const CARD_VARIANTS: Variants = {
+  // No opacity here, deliberately.
+  //
+  // An interrupted transform leaves a card a few pixels off; an interrupted
+  // opacity leaves it INVISIBLE. On a screen a clinician uses to review what
+  // will enter a patient's chart, "silently blank" is not an acceptable failure
+  // mode for a decorative entrance, so movement is animated and visibility is
+  // not. The card is readable in every intermediate state.
+  hidden: { y: 15 },
+  visible: { y: 0, transition: { duration: 0.3, ease: "easeOut" } },
+};
+
 
 export default function ClinicianPage() {
   const [map, setMap] = useState<StoryMap | null>(null);
@@ -32,6 +81,8 @@ export default function ClinicianPage() {
     fullyPersisted: boolean; partial: boolean; origin: string;
   }>(null);
   const [replayed, setReplayed] = useState(false);
+  /** Serialized last-seen map, so polling does not re-render on identical data. */
+  const lastMapRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     // Server is authoritative. localStorage is a same-browser fallback only, and
@@ -45,7 +96,19 @@ export default function ClinicianPage() {
           session?: { id: string; state: string };
         };
         if (j.map) {
-          setMap(j.map);
+          // Only update state when the payload actually CHANGED.
+          //
+          // This polls every 1.5s. Calling setMap() unconditionally handed React
+          // a new object ~40 times a minute, re-rendering the whole brief and
+          // restarting every entrance animation before its 0.3s could finish —
+          // so cards sat frozen part-way and the review was unreadable.
+          // Re-rendering only on real change is both the fix and the honest
+          // behaviour: nothing changed, so nothing should move.
+          const next = JSON.stringify(j.map);
+          if (next !== lastMapRef.current) {
+            lastMapRef.current = next;
+            setMap(j.map);
+          }
           setSessionId(j.session?.id ?? j.map.sessionId);
           setState(j.session?.state ?? null);
           if (j.mode) setMode(j.mode);
@@ -133,9 +196,20 @@ export default function ClinicianPage() {
     }
   };
 
+  /*
+   * `key` matters here, and so does not fading from zero.
+   *
+   * This empty state and the populated brief are both <motion.main> in the same
+   * tree position, so React reconciles them as ONE element. The stale
+   * `opacity: 0` this branch set as its `initial` therefore survived the swap to
+   * the real brief, and framer never animated it away — the clinician got a
+   * fully rendered, completely invisible page. Distinct keys force a real
+   * remount, and starting at opacity 1 means a stuck transition can never hide
+   * the review again.
+   */
   if (!map) {
     return (
-      <motion.main initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ maxWidth: 720, margin: "0 auto", padding: 40 }}>
+      <motion.main key="empty" initial={{ opacity: 1 }} animate={{ opacity: 1 }} style={{ maxWidth: 720, margin: "0 auto", padding: 40 }}>
         <h1 style={{ fontSize: 21 }}>Nothing in the queue</h1>
         <p className="muted">Run a patient check-in first, then come back.</p>
         <Link href="/patient" className="btn primary" style={{ textDecoration: "none" }}>Open patient check-in →</Link>
@@ -155,15 +229,12 @@ export default function ClinicianPage() {
     .map((i) => ({ itemId: i.id, decision: ruling[i.id] }));
   const undecided = promotable.length - decisions.length;
 
-  const cardVariants: any = {
-    hidden: { opacity: 0, y: 15 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" } }
-  };
-
   return (
-    <motion.main 
-      initial={false} animate="visible" variants={{ visible: { transition: { staggerChildren: 0.1 } } }}
-      style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 20px 40px" }}
+    <motion.main
+      key="brief"
+      initial="hidden" animate="visible"
+      variants={CONTAINER_VARIANTS}
+      style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 20px 40px", opacity: 1 }}
     >
       <header style={{ display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap", paddingBottom: 14, borderBottom: "1px solid var(--line)" }}>
         <div>
@@ -185,7 +256,7 @@ export default function ClinicianPage() {
 
       <div className="clinician-grid" style={{ gap: 18, marginTop: 16, alignItems: "start" }}>
         {/* --- Column 1: Queue Rail (280px) --- */}
-        <motion.div variants={cardVariants} className="card" style={{ display: "flex", flexDirection: "column", gap: 12, padding: 14, background: "var(--surface-sunken)" }}>
+        <motion.div variants={CARD_VARIANTS} initial="hidden" animate="visible" className="card" style={{ display: "flex", flexDirection: "column", gap: 12, padding: 14, background: "var(--surface-sunken)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, borderBottom: "1px solid var(--line)", paddingBottom: 8 }}>
             <ClipboardList size={16} className="muted" />
             <h2 style={{ fontSize: 13, fontWeight: 700, margin: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>Clinician Queue</h2>
@@ -248,7 +319,7 @@ export default function ClinicianPage() {
         {/* --- Column 2: Flexible Central Casefile --- */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {map.openQuestions.length > 0 && (
-            <motion.section variants={cardVariants} className="card">
+            <motion.section variants={CARD_VARIANTS} initial="hidden" animate="visible" className="card">
               <header><ShieldAlert size={18} className="muted" /> <h2>Unresolved</h2></header>
               <div>
                 {map.openQuestions.map((q) => (
@@ -264,7 +335,7 @@ export default function ClinicianPage() {
             </motion.section>
           )}
 
-          <motion.section variants={cardVariants} className="card">
+          <motion.section variants={CARD_VARIANTS} initial="hidden" animate="visible" className="card">
             <header>
               <h2>Patient said</h2>
               <span className="chip" style={{ marginLeft: "auto" }}>verbatim transcript</span>
@@ -277,7 +348,7 @@ export default function ClinicianPage() {
             )}
           </motion.section>
 
-          <motion.section variants={cardVariants} className="card">
+          <motion.section variants={CARD_VARIANTS} initial="hidden" animate="visible" className="card">
             <header><ShieldCheck size={18} className="muted" /> <h2>Prologue inferred</h2><span className="chip" style={{ marginLeft: "auto" }}>every item cited</span></header>
             <div>
               {inferred.length === 0
@@ -313,7 +384,7 @@ export default function ClinicianPage() {
           </motion.section>
 
           {record.length > 0 && (
-            <motion.section variants={cardVariants} className="card">
+            <motion.section variants={CARD_VARIANTS} initial="hidden" animate="visible" className="card">
               <header><Database size={18} className="muted" /> <h2>From the record</h2></header>
               <div>{record.map((i) => <ItemRow key={i.id} item={i} audience="clinician" />)}</div>
             </motion.section>
@@ -322,19 +393,19 @@ export default function ClinicianPage() {
 
         <div className="clinician-right-rail" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {map.timeline && (
-            <motion.section variants={cardVariants} className="card">
+            <motion.section variants={CARD_VARIANTS} initial="hidden" animate="visible" className="card">
               <header><FileText size={18} className="muted" /> <h2>Timing</h2></header>
               <Timeline model={map.timeline} audience="clinician" />
             </motion.section>
           )}
           {map.reconciliation.length > 0 && (
-            <motion.section variants={cardVariants} className="card">
+            <motion.section variants={CARD_VARIANTS} initial="hidden" animate="visible" className="card">
               <header><ClipboardList size={18} className="muted" /> <h2>Medication reconciliation</h2></header>
               <Reconciliation rows={map.reconciliation} />
             </motion.section>
           )}
           {map.benefits && (
-            <motion.section variants={cardVariants} className="card">
+            <motion.section variants={CARD_VARIANTS} initial="hidden" animate="visible" className="card">
               <header>
                 <h2>Coverage</h2>
                 <span className={`chip ${map.benefits.simulated ? "sim" : "live"}`} style={{ marginLeft: "auto" }}>
