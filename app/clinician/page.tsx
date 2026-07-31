@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { motion, AnimatePresence } from "framer-motion";
+import { User, ClipboardList, ShieldAlert, Check, X, ArrowLeft, Volume2, ShieldCheck, Database, FileText } from "lucide-react";
 import type { StoryMap, StoryItem } from "@/lib/types";
 import { Timeline, ItemRow, Reconciliation, BenefitsCard, EscalationCard } from "@/components/StoryMap";
 
@@ -132,11 +134,11 @@ export default function ClinicianPage() {
 
   if (!map) {
     return (
-      <main style={{ maxWidth: 720, margin: "0 auto", padding: 40 }}>
+      <motion.main initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ maxWidth: 720, margin: "0 auto", padding: 40 }}>
         <h1 style={{ fontSize: 21 }}>Nothing in the queue</h1>
         <p className="muted">Run a patient check-in first, then come back.</p>
         <Link href="/patient" className="btn primary" style={{ textDecoration: "none" }}>Open patient check-in →</Link>
-      </main>
+      </motion.main>
     );
   }
 
@@ -152,8 +154,16 @@ export default function ClinicianPage() {
     .map((i) => ({ itemId: i.id, decision: ruling[i.id] }));
   const undecided = promotable.length - decisions.length;
 
+  const cardVariants: any = {
+    hidden: { opacity: 0, y: 15 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" } }
+  };
+
   return (
-    <main style={{ maxWidth: 1180, margin: "0 auto", padding: "18px 18px 24px" }}>
+    <motion.main 
+      initial="hidden" animate="visible" variants={{ visible: { transition: { staggerChildren: 0.1 } } }}
+      style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 20px 40px" }}
+    >
       <header style={{ display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap", paddingBottom: 14, borderBottom: "1px solid var(--line)" }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 22, letterSpacing: "-.02em" }}>Pre-visit brief</h1>
@@ -175,8 +185,8 @@ export default function ClinicianPage() {
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,420px)", gap: 18, marginTop: 16, alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {map.openQuestions.length > 0 && (
-            <section className="card">
-              <header><h2>Unresolved</h2></header>
+            <motion.section variants={cardVariants} className="card">
+              <header><ShieldAlert size={18} className="muted" /> <h2>Unresolved</h2></header>
               <div>
                 {map.openQuestions.map((q) => (
                   <div key={q.id} style={{ padding: "10px 14px", borderTop: "1px solid var(--line-soft)", display: "flex", gap: 10 }}>
@@ -188,10 +198,10 @@ export default function ClinicianPage() {
                   </div>
                 ))}
               </div>
-            </section>
+            </motion.section>
           )}
 
-          <section className="card">
+          <motion.section variants={cardVariants} className="card">
             <header>
               <h2>Patient said</h2>
               <span className="chip" style={{ marginLeft: "auto" }}>verbatim transcript</span>
@@ -202,10 +212,10 @@ export default function ClinicianPage() {
                 🔊 reading the transcript aloud — synthesised speech, not a recording
               </div>
             )}
-          </section>
+          </motion.section>
 
-          <section className="card">
-            <header><h2>Prologue inferred</h2><span className="chip" style={{ marginLeft: "auto" }}>every item cited</span></header>
+          <motion.section variants={cardVariants} className="card">
+            <header><ShieldCheck size={18} className="muted" /> <h2>Prologue inferred</h2><span className="chip" style={{ marginLeft: "auto" }}>every item cited</span></header>
             <div>
               {inferred.length === 0
                 ? <div className="mono muted" style={{ padding: 20, textAlign: "center" }}>No inferences</div>
@@ -237,31 +247,31 @@ export default function ClinicianPage() {
                     </div>
                   ))}
             </div>
-          </section>
+          </motion.section>
 
           {record.length > 0 && (
-            <section className="card">
-              <header><h2>From the record</h2></header>
+            <motion.section variants={cardVariants} className="card">
+              <header><Database size={18} className="muted" /> <h2>From the record</h2></header>
               <div>{record.map((i) => <ItemRow key={i.id} item={i} audience="clinician" />)}</div>
-            </section>
+            </motion.section>
           )}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {map.timeline && (
-            <section className="card">
-              <header><h2>Timing</h2></header>
+            <motion.section variants={cardVariants} className="card">
+              <header><FileText size={18} className="muted" /> <h2>Timing</h2></header>
               <Timeline model={map.timeline} audience="clinician" />
-            </section>
+            </motion.section>
           )}
           {map.reconciliation.length > 0 && (
-            <section className="card">
-              <header><h2>Medication reconciliation</h2></header>
+            <motion.section variants={cardVariants} className="card">
+              <header><ClipboardList size={18} className="muted" /> <h2>Medication reconciliation</h2></header>
               <Reconciliation rows={map.reconciliation} />
-            </section>
+            </motion.section>
           )}
           {map.benefits && (
-            <section className="card">
+            <motion.section variants={cardVariants} className="card">
               <header>
                 <h2>Coverage</h2>
                 <span className={`chip ${map.benefits.simulated ? "sim" : "live"}`} style={{ marginLeft: "auto" }}>
@@ -269,7 +279,7 @@ export default function ClinicianPage() {
                 </span>
               </header>
               <BenefitsCard b={map.benefits} />
-            </section>
+            </motion.section>
           )}
         </div>
       </div>
@@ -364,6 +374,6 @@ export default function ClinicianPage() {
           {isFinal ? "Signed ✓" : signing ? "Signing…" : "Approve & sign"}
         </button>
       </div>
-    </main>
+    </motion.main>
   );
 }

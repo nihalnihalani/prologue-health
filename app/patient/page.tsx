@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { motion, AnimatePresence } from "framer-motion";
+import { Mic, MicOff, Play, Check, AlertCircle, ChevronRight, Settings } from "lucide-react";
 import { PrologueSession } from "@/lib/session";
 import type { StoryMap } from "@/lib/types";
 import type { ChartSlice } from "@/lib/fixtures";
@@ -372,17 +374,27 @@ export default function PatientPage() {
 
   const patientItems = map.items.filter((i) => i.patientText);
 
+  const cardVariants: any = {
+    hidden: { opacity: 0, y: 15 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" } },
+  };
+
   return (
-    <main dir={rtl ? "rtl" : "ltr"} style={{ maxWidth: 560, margin: "0 auto", padding: "18px 16px 120px" }}>
+    <motion.main 
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}
+      dir={rtl ? "rtl" : "ltr"} 
+      style={{ maxWidth: 560, margin: "0 auto", padding: "18px 16px 120px" }}
+    >
       <header style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-        <h1 style={{ margin: 0, fontSize: 21, letterSpacing: "-.02em" }}>Prologue</h1>
-        <Link href="/clinician" className="chip" style={{ marginInlineStart: "auto", textDecoration: "none" }}>
-          Clinician view →
+        <h1 style={{ margin: 0, fontSize: 24, letterSpacing: "-.02em", fontWeight: 700 }}>Prologue</h1>
+        <Link href="/clinician" className="chip" style={{ marginInlineStart: "auto", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
+          Clinician view <ChevronRight size={12} />
         </Link>
       </header>
 
       {/* ---------- language ---------- */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
+        <Settings size={14} className="muted" />
         <label htmlFor="locale" className="mono" style={{ fontSize: 10.5, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--ink-3)" }}>
           Language
         </label>
@@ -420,7 +432,7 @@ export default function PatientPage() {
 
       {/* ---------- consent gate ---------- */}
       {!consented ? (
-        <section className="card">
+        <motion.section variants={cardVariants} initial="hidden" animate="visible" className="card">
           <header><h2>{t(locale, "consentTitle")}</h2></header>
           <div className="body">
             <p style={{ marginTop: 0, fontSize: 15 }}>{t(locale, "consentBody")}</p>
@@ -429,80 +441,95 @@ export default function PatientPage() {
               <li>{t(locale, "consentBullet2")}</li>
               <li>{t(locale, "consentBullet3")}</li>
             </ul>
-            <button className="btn primary big" onClick={grantConsent} style={{ width: "100%", marginTop: 8 }}>
+            <button className="btn primary big" onClick={grantConsent} style={{ width: "100%", marginTop: 12 }}>
               {t(locale, "consentAccept")}
             </button>
           </div>
-        </section>
+        </motion.section>
       ) : (
-        <>
-          <section className="card" style={{ marginBottom: 14 }}>
+        <motion.div initial="hidden" animate="visible" variants={{ visible: { transition: { staggerChildren: 0.1 } } }}>
+          <motion.section variants={cardVariants} className="card" style={{ marginBottom: 14 }}>
             <header>
-              <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--crit)" }} />
+              <motion.span 
+                animate={{ opacity: [1, 0.5, 1] }} 
+                transition={{ duration: 2, repeat: Infinity }}
+                aria-hidden="true" 
+                style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--crit)" }} 
+              />
               <h2>{t(locale, "recording")}</h2>
               <span className="chip" style={{ marginInlineStart: "auto" }}>{LOCALES[locale].bcp47}</span>
             </header>
-            <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10, maxHeight: 320, overflowY: "auto" }}>
-              {turns.map((turn, i) => (
-                <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: turn.who === "patient" ? "flex-end" : "flex-start", gap: 3 }}>
-                  <span className="mono" style={{ fontSize: 9.5, letterSpacing: ".09em", textTransform: "uppercase", color: turn.who === "agent" ? "var(--accent)" : "var(--ink-3)" }}>
-                    {turn.who === "agent" ? "Prologue" : turn.who === "patient" ? t(locale, "srcPatient") : "System"}
-                  </span>
-                  <div
-                    style={{
-                      padding: "9px 12px", borderRadius: 13, fontSize: 14.5, maxWidth: "88%",
-                      background: turn.who === "agent" ? "var(--accent-2)" : turn.who === "system" ? "transparent" : "var(--surface-2)",
-                      border: turn.who === "system" ? "1px dashed var(--line)" : "none",
-                      color: turn.who === "system" ? "var(--ink-3)" : "var(--ink)",
-                      fontFamily: turn.who === "system" ? "var(--mono)" : "inherit",
-                    }}
+            <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10, maxHeight: 360, overflowY: "auto" }}>
+              <AnimatePresence initial={false}>
+                {turns.map((turn, i) => (
+                  <motion.div 
+                    key={i} 
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    style={{ display: "flex", flexDirection: "column", alignItems: turn.who === "patient" ? "flex-end" : "flex-start", gap: 3 }}
                   >
-                    {turn.text}
-                  </div>
-                </div>
-              ))}
+                    <span className="mono" style={{ fontSize: 9.5, letterSpacing: ".09em", textTransform: "uppercase", color: turn.who === "agent" ? "var(--accent)" : "var(--ink-3)" }}>
+                      {turn.who === "agent" ? "Prologue" : turn.who === "patient" ? t(locale, "srcPatient") : "System"}
+                    </span>
+                    <div
+                      style={{
+                        padding: "10px 14px", borderRadius: 14, fontSize: 14.5, maxWidth: "88%",
+                        background: turn.who === "agent" ? "var(--accent-2)" : turn.who === "system" ? "transparent" : "var(--surface-2)",
+                        border: turn.who === "system" ? "1px dashed var(--line)" : "none",
+                        color: turn.who === "system" ? "var(--ink-3)" : "var(--ink)",
+                        fontFamily: turn.who === "system" ? "var(--mono)" : "inherit",
+                        borderBottomLeftRadius: turn.who === "agent" ? 4 : 14,
+                        borderBottomRightRadius: turn.who === "patient" ? 4 : 14,
+                      }}
+                    >
+                      {turn.text}
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
               {partial && (
-                <div style={{ alignSelf: "flex-end", padding: "9px 12px", borderRadius: 13, background: "var(--surface-2)", opacity: 0.6, fontSize: 14.5 }}>
-                  {partial}…
-                </div>
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ alignSelf: "flex-end", padding: "10px 14px", borderRadius: 14, borderBottomRightRadius: 4, background: "var(--surface-2)", opacity: 0.7, fontSize: 14.5 }}>
+                  <motion.span animate={{ opacity: [0, 1, 0] }} transition={{ repeat: Infinity, duration: 1.5 }}>...</motion.span> {partial}
+                </motion.div>
               )}
             </div>
 
-            <div style={{ display: "flex", gap: 8, padding: 12, borderTop: "1px solid var(--line-soft)", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, padding: 12, borderTop: "1px solid var(--line-soft)", flexWrap: "wrap", background: "var(--surface-2)" }}>
               {(mode === "deepgram" || mode === "gemini") && liveState === "live" && (
-                <span className="chip live" style={{ flex: 1, textAlign: "center", padding: "10px" }}>
-                  🎙 Listening — just speak
+                <span className="chip live" style={{ flex: 1, textAlign: "center", padding: "12px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 13 }}>
+                  <Mic size={14} /> Listening — just speak
                 </span>
               )}
               {mode === "browser" && (
                 <button className={`btn ${micLive ? "danger" : "primary"} big`} onClick={toggleMic} disabled={busy} style={{ flex: 1 }}>
-                  {micLive ? t(locale, "stopButton") : `🎤 ${t(locale, "speakButton")}`}
+                  {micLive ? <><MicOff size={16}/> {t(locale, "stopButton")}</> : <><Mic size={16}/> {t(locale, "speakButton")}</>}
                 </button>
               )}
               <button className="btn big" onClick={nextScripted} disabled={busy || scriptIdx >= MARIA_SCRIPT.length} style={{ flex: 1 }}>
+                <Play size={16} />
                 {scriptIdx >= MARIA_SCRIPT.length ? "Script complete" : `Play scripted line (${scriptIdx + 1}/${MARIA_SCRIPT.length})`}
               </button>
             </div>
-          </section>
+          </motion.section>
 
-          {map.escalation && <div style={{ marginBottom: 14 }}><EscalationCard map={map} audience="patient" /></div>}
+          {map.escalation && <motion.div variants={cardVariants} style={{ marginBottom: 14 }}><EscalationCard map={map} audience="patient" /></motion.div>}
 
           {map.timeline && (
-            <section className="card" style={{ marginBottom: 14 }}>
+            <motion.section variants={cardVariants} className="card" style={{ marginBottom: 14 }}>
               <header><h2>{t(locale, "labelWhyFlagged")}</h2></header>
               <Timeline model={map.timeline} audience="patient" />
-            </section>
+            </motion.section>
           )}
 
           {map.reconciliation.length > 0 && (
-            <section className="card" style={{ marginBottom: 14 }}>
+            <motion.section variants={cardVariants} className="card" style={{ marginBottom: 14 }}>
               <header><h2>{t(locale, "labelMeds")}</h2></header>
               <Reconciliation rows={map.reconciliation} />
-            </section>
+            </motion.section>
           )}
 
           {map.benefits && (
-            <section className="card" style={{ marginBottom: 14 }}>
+            <motion.section variants={cardVariants} className="card" style={{ marginBottom: 14 }}>
               <header>
                 <h2>{t(locale, "labelCoverage")}</h2>
                 <span className={`chip ${map.benefits.simulated ? "sim" : "live"}`} style={{ marginInlineStart: "auto" }}>
@@ -510,34 +537,34 @@ export default function PatientPage() {
                 </span>
               </header>
               <BenefitsCard b={map.benefits} />
-            </section>
+            </motion.section>
           )}
 
-          <section className="card" style={{ marginBottom: 14 }}>
+          <motion.section variants={cardVariants} className="card" style={{ marginBottom: 14 }}>
             <header><h2>{t(locale, "labelHeard")}</h2></header>
             <div>
               {patientItems.map((i) => <ItemRow key={i.id} item={i} audience="patient" locale={locale} />)}
             </div>
             <div className="disc" style={{ margin: 14 }}>{t(locale, "labelDraft")}</div>
-          </section>
+          </motion.section>
 
-          <section className="card">
+          <motion.section variants={cardVariants} className="card">
             <header>
               <h2>Under the hood</h2>
               <span className="chip" style={{ marginInlineStart: "auto" }}>chart warm {backend?.warmMs ?? "–"} ms · {backend?.chart}</span>
             </header>
             <CallLog calls={map.calls} />
-          </section>
+          </motion.section>
 
           {done && (
-            <div style={{ marginTop: 14, textAlign: "center" }}>
-              <Link href="/clinician" className="btn primary big" style={{ textDecoration: "none", display: "inline-block" }}>
-                Open clinician review →
+            <motion.div variants={cardVariants} style={{ marginTop: 24, textAlign: "center" }}>
+              <Link href="/clinician" className="btn primary big" style={{ textDecoration: "none", display: "inline-flex", gap: 8, alignItems: "center" }}>
+                Open clinician review <ChevronRight size={16} />
               </Link>
-            </div>
+            </motion.div>
           )}
-        </>
+        </motion.div>
       )}
-    </main>
+    </motion.main>
   );
 }
