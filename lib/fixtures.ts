@@ -12,6 +12,22 @@ const daysAgo = (n: number) => {
   return d.toISOString().slice(0, 10);
 };
 
+/**
+ * Calendar days between a date-only string and today, in UTC.
+ *
+ * Previously this rounded elapsed milliseconds against `Date.now()`, which made
+ * the answer depend on the time of day: a nominal "22 days ago" became 23 after
+ * roughly 18:00 local. Day-of-therapy feeds a clinical window comparison, so a
+ * clock-dependent result could flip a determination at the boundary. Comparing
+ * UTC calendar days removes the dependency entirely.
+ */
+export function calendarDaysAgo(dateOnly: string, now: Date = new Date()): number {
+  const [y, m, d] = dateOnly.slice(0, 10).split("-").map(Number);
+  const then = Date.UTC(y, m - 1, d);
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Math.round((today - then) / 86_400_000);
+}
+
 export const LAMOTRIGINE_STARTED_DAYS_AGO = 22;
 export const RASH_STARTED_DAYS_AGO = 4;
 
@@ -173,9 +189,7 @@ export function chartSlice(): ChartSlice {
       id: m.id,
       name: m.medicationCodeableConcept.coding[0].display,
       text: m.medicationCodeableConcept.text,
-      startedDaysAgo: Math.round(
-        (Date.now() - new Date(m.authoredOn).getTime()) / 86_400_000
-      ),
+      startedDaysAgo: calendarDaysAgo(m.authoredOn),
       dosage: m.dosageInstruction[0].text,
       prescriber: m.requester.display,
       status: m.status,

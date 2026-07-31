@@ -73,7 +73,7 @@ export default function PatientPage() {
     void fetch("/api/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(m),
+      body: JSON.stringify({ ...m, patientId: m.patient.id }),
     }).catch(() => {});
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(m));

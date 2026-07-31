@@ -8,7 +8,8 @@
  */
 
 import { MedplumClient } from "@medplum/core";
-import { chartSlice, type ChartSlice, PATIENT_ID } from "./fixtures";
+import { chartSlice, calendarDaysAgo, type ChartSlice, PATIENT_ID } from "./fixtures";
+import { assertFixtureAllowed } from "./runtime";
 
 export interface Timed<T> {
   data: T;
@@ -47,8 +48,14 @@ async function getClient(): Promise<MedplumClient | null> {
   }
 }
 
-/** In-process cache of the patient's slice, warmed at session start. */
-let warmCache: { at: number; slice: ChartSlice } | null = null;
+/**
+ * Chart cache, keyed BY PATIENT.
+ *
+ * This was previously a single process-global slot, which meant a second
+ * patient's session would read the first patient's chart — a cross-patient data
+ * leak, and the sort of defect that ends a pilot.
+ */
+const warmCache = new Map<string, { at: number; slice: ChartSlice }>();
 const WARM_TTL_MS = 5 * 60_000;
 
 /**
@@ -58,21 +65,22 @@ const WARM_TTL_MS = 5 * 60_000;
  * that happen mid-conversation must not pay a network round trip, because a
  * felt pause on a voice call is what kills the illusion of a conversation.
  */
-export async function warmChart(): Promise<Timed<ChartSlice>> {
+export async function warmChart(patientId: string = PATIENT_ID): Promise<Timed<ChartSlice>> {
   const t0 = performance.now();
   const c = await getClient();
 
   if (!c) {
+    assertFixtureAllowed("Medplum", "no credentials configured");
     const slice = chartSlice();
-    warmCache = { at: Date.now(), slice };
+    warmCache.set(patientId, { at: Date.now(), slice });
     return { data: slice, ms: Math.round(performance.now() - t0), simulated: true };
   }
 
   try {
     const [meds, conds, allergies] = await Promise.all([
-      c.searchResources("MedicationRequest", { patient: PATIENT_ID, status: "active" }),
-      c.searchResources("Condition", { patient: PATIENT_ID }),
-      c.searchResources("AllergyIntolerance", { patient: PATIENT_ID }),
+      c.searchResources("MedicationRequest", { patient: patientId, status: "active" }),
+      c.searchResources("Condition", { patient: patientId }),
+      c.searchResources("AllergyIntolerance", { patient: patientId }),
     ]);
 
     const fixture = chartSlice();
@@ -87,9 +95,7 @@ export async function warmChart(): Promise<Timed<ChartSlice>> {
               id: m.id ?? "",
               name: cc?.coding?.[0]?.display ?? cc?.text ?? "unknown",
               text: cc?.text ?? "",
-              startedDaysAgo: authored
-                ? Math.round((Date.now() - new Date(authored).getTime()) / 86_400_000)
-                : 0,
+              startedDaysAgo: authored ? calendarDaysAgo(authored) : 0,
               dosage:
                 (m as { dosageInstruction?: { text?: string }[] }).dosageInstruction?.[0]?.text ?? "",
               prescriber: (m as { requester?: { display?: string } }).requester?.display ?? "",
@@ -105,12 +111,15 @@ export async function warmChart(): Promise<Timed<ChartSlice>> {
         : fixture.allergies,
     };
 
-    warmCache = { at: Date.now(), slice };
+    warmCache.set(patientId, { at: Date.now(), slice });
     return { data: slice, ms: Math.round(performance.now() - t0), simulated: false };
   } catch (err) {
-    console.error("[medplum] warm failed, serving fixture:", (err as Error)?.message);
+    const detail = (err as Error)?.message;
+    console.error("[medplum] warm failed:", detail);
+    // Pilot mode surfaces the failure rather than substituting synthetic data.
+    assertFixtureAllowed("Medplum", detail);
     const slice = chartSlice();
-    warmCache = { at: Date.now(), slice };
+    warmCache.set(patientId, { at: Date.now(), slice });
     return { data: slice, ms: Math.round(performance.now() - t0), simulated: true };
   }
 }
@@ -119,14 +128,47 @@ export async function warmChart(): Promise<Timed<ChartSlice>> {
  * Read the warmed slice. This is what runs inside the conversation turn.
  * It must be effectively instant — no network, no await on I/O.
  */
-export function readChart(): Timed<ChartSlice> {
+export function readChart(patientId: string = PATIENT_ID): Timed<ChartSlice> {
   const t0 = performance.now();
-  if (warmCache && Date.now() - warmCache.at < WARM_TTL_MS) {
-    return { data: warmCache.slice, ms: Math.round((performance.now() - t0) * 100) / 100, simulated: !medplumConfigured };
+  const hit = warmCache.get(patientId);
+  if (hit && Date.now() - hit.at < WARM_TTL_MS) {
+    return {
+      data: hit.slice,
+      ms: Math.round((performance.now() - t0) * 100) / 100,
+      simulated: !medplumConfigured,
+    };
   }
+  assertFixtureAllowed("Medplum", `no warmed chart for ${patientId}`);
   const slice = chartSlice();
-  warmCache = { at: Date.now(), slice };
+  warmCache.set(patientId, { at: Date.now(), slice });
   return { data: slice, ms: Math.round((performance.now() - t0) * 100) / 100, simulated: true };
+}
+
+/**
+ * Move a Composition from preliminary to final.
+ *
+ * This is the ONLY function permitted to write a final clinical status, and it
+ * is reachable only from the approval transaction. It deliberately does not
+ * accept an arbitrary status.
+ */
+export async function finalizeComposition(
+  compositionId: string,
+  attesterName: string,
+  at: string
+): Promise<{ ok: boolean; error?: string }> {
+  const c = await getClient();
+  if (!c) return { ok: false, error: "medplum not configured" };
+  try {
+    const existing = (await c.readResource("Composition", compositionId)) as Record<string, unknown>;
+    await c.updateResource({
+      ...existing,
+      status: "final",
+      attester: [{ mode: "legal", time: at, party: { display: attesterName } }],
+    } as Parameters<typeof c.updateResource>[0]);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
 }
 
 /**
