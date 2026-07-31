@@ -7,7 +7,7 @@
  * honestly rather than implying a live backend that isn't there.
  */
 
-import { MedplumClient } from "@medplum/core";
+import { MedplumClient, ClientStorage, MemoryStorage } from "@medplum/core";
 import {
   chartSlice,
   emptyChartSlice,
@@ -39,7 +39,18 @@ let lastAuthError: string | undefined;
 
 async function getClient(): Promise<MedplumClient | null> {
   if (!medplumConfigured) return null;
-  if (!client) client = new MedplumClient({ baseUrl });
+  // Storage MUST be explicit on the server.
+  //
+  // MedplumClient defaults to `localStorage` whenever that global exists. Node
+  // 24 and earlier have no such global, so it quietly picked memory storage and
+  // this worked. Node 25 defines a `localStorage` global that is inert unless
+  // the process was started with `--localstorage-file`, so client login fails
+  // with "this.storage.removeItem is not a function" — and because the catch
+  // below degrades to the fixture, a fully-credentialed Medplum project silently
+  // served synthetic data instead. Pinning in-memory storage makes the server
+  // path behave identically on every Node version; it also keeps the service
+  // account's tokens out of any persistent store, which is what we want anyway.
+  if (!client) client = new MedplumClient({ baseUrl, storage: new ClientStorage(new MemoryStorage()) });
   if (!authPromise) {
     authPromise = client
       .startClientLogin(clientId!, clientSecret!)
@@ -67,7 +78,16 @@ async function getClient(): Promise<MedplumClient | null> {
  * patient's session would read the first patient's chart — a cross-patient data
  * leak, and the sort of defect that ends a pilot.
  */
-const warmCache = new Map<string, { at: number; slice: ChartSlice }>();
+/**
+ * The cache stores the slice's ORIGIN alongside it, not just the bytes.
+ *
+ * Origin is a property of how the data was obtained, so it has to be cached
+ * with the data. Recomputing it at read time from `medplumConfigured` asks a
+ * question about configuration and reports the answer as a question about
+ * provenance — which is how a fixture cached after a failed live read got
+ * reported as live.
+ */
+const warmCache = new Map<string, { at: number; slice: ChartSlice; simulated: boolean }>();
 const WARM_TTL_MS = 5 * 60_000;
 
 /** Business key -> Medplum's real, server-assigned Patient id. */
@@ -127,7 +147,7 @@ export async function warmChart(patientId: string = PATIENT_ID): Promise<Timed<C
   if (!c) {
     assertFixtureAllowed("Medplum", "no credentials configured");
     const slice = chartSlice();
-    warmCache.set(patientId, { at: Date.now(), slice });
+    warmCache.set(patientId, { at: Date.now(), slice, simulated: true });
     return { data: slice, ms: Math.round(performance.now() - t0), simulated: true };
   }
 
@@ -176,7 +196,7 @@ export async function warmChart(patientId: string = PATIENT_ID): Promise<Timed<C
         : [],
     };
 
-    warmCache.set(patientId, { at: Date.now(), slice });
+    warmCache.set(patientId, { at: Date.now(), slice, simulated: false });
     return { data: slice, ms: Math.round(performance.now() - t0), simulated: false };
   } catch (err) {
     const detail = (err as Error)?.message;
@@ -184,7 +204,7 @@ export async function warmChart(patientId: string = PATIENT_ID): Promise<Timed<C
     // Pilot mode surfaces the failure rather than substituting synthetic data.
     assertFixtureAllowed("Medplum", detail);
     const slice = chartSlice();
-    warmCache.set(patientId, { at: Date.now(), slice });
+    warmCache.set(patientId, { at: Date.now(), slice, simulated: true });
     return { data: slice, ms: Math.round(performance.now() - t0), simulated: true };
   }
 }
@@ -200,12 +220,13 @@ export function readChart(patientId: string = PATIENT_ID): Timed<ChartSlice> {
     return {
       data: hit.slice,
       ms: Math.round((performance.now() - t0) * 100) / 100,
-      simulated: !medplumConfigured,
+      // The cached origin, never a re-derivation from configuration.
+      simulated: hit.simulated,
     };
   }
   assertFixtureAllowed("Medplum", `no warmed chart for ${patientId}`);
   const slice = chartSlice();
-  warmCache.set(patientId, { at: Date.now(), slice });
+  warmCache.set(patientId, { at: Date.now(), slice, simulated: true });
   return { data: slice, ms: Math.round((performance.now() - t0) * 100) / 100, simulated: true };
 }
 

@@ -9,7 +9,7 @@
 
 import { test } from "vitest";
 import assert from "node:assert/strict";
-import { DG_FUNCTIONS } from "../lib/deepgram-live";
+import { DG_FUNCTIONS, DG_AUTH_SUBPROTOCOL } from "../lib/deepgram-live";
 import { keyterms } from "../lib/fixtures";
 import { LOCALE_KEYS } from "../lib/i18n";
 
@@ -66,6 +66,16 @@ test("the safety tool exists and is described so the model must obey it", () => 
   assert.ok(rf, "check_red_flags must be declared");
   assert.match(rf.description, /every patient turn/i);
   assert.match(rf.description, /verbatim|stop the routine/i);
+});
+
+test("the JWT from /api/deepgram-token is offered as 'bearer', never 'token'", () => {
+  // /api/deepgram-token returns `access_token` from POST /v1/auth/grant — a JWT.
+  // Deepgram accepts "token" ONLY for a raw API key. Verified against the live
+  // endpoint: ["bearer", jwt] handshakes and yields Welcome/SettingsApplied;
+  // ["token", jwt] is dropped with close code 1006 and no error frame, so this
+  // regression is invisible unless it is pinned here.
+  assert.equal(DG_AUTH_SUBPROTOCOL, "bearer");
+  assert.notEqual(DG_AUTH_SUBPROTOCOL, "token");
 });
 
 test("the eligibility tool forbids stating a total price", () => {

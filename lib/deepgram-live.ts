@@ -35,6 +35,16 @@ const KEEPALIVE_MS = 8000;
 const ENDPOINT =
   process.env.NEXT_PUBLIC_DEEPGRAM_AGENT_URL || "wss://agent.deepgram.com/v1/agent/converse";
 
+/**
+ * The credential type is encoded in the WebSocket subprotocol NAME, and the two
+ * names are not interchangeable: "token" authenticates a raw API key, "bearer"
+ * a short-lived JWT from POST /v1/auth/grant. `/api/deepgram-token` mints a JWT
+ * (it returns `access_token`), so this must stay "bearer". Getting it wrong
+ * fails the handshake before any Deepgram frame is sent, so the only symptom is
+ * an opaque close code 1006 — which reads like a network fault, not an auth bug.
+ */
+export const DG_AUTH_SUBPROTOCOL = "bearer";
+
 export interface DgLatency {
   stt?: number;
   ttt?: number;
@@ -206,8 +216,12 @@ export async function connectDeepgram(opts: {
   if (!token) throw new Error("deepgram_no_token");
 
   // Browsers cannot set custom WebSocket headers, so Deepgram accepts the token
-  // as a subprotocol pair.
-  const ws = new WebSocket(ENDPOINT, ["token", token]);
+  // as a subprotocol pair. The subprotocol NAME encodes the credential type:
+  // "token" is for a raw API key, "bearer" for a short-lived JWT from
+  // /v1/auth/grant. We mint a JWT, so it must be "bearer" — pairing a JWT with
+  // "token" is rejected during the handshake and surfaces only as an opaque
+  // 1006 close with no Deepgram error frame.
+  const ws = new WebSocket(ENDPOINT, [DG_AUTH_SUBPROTOCOL, token]);
   ws.binaryType = "arraybuffer";
 
   const player = new Player();

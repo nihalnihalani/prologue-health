@@ -104,6 +104,22 @@ test("ADVERSARIAL: an unconfigured chart read is labelled simulated", async () =
   assert.equal(r.simulated, true, "with no credentials the result must say so");
 });
 
+test("ADVERSARIAL: a cached fixture is never re-labelled live on read", async () => {
+  // The failure this pins: warmChart() caches the FIXTURE when a live read
+  // fails, and readChart() used to recompute the label as `!medplumConfigured`.
+  // With credentials present but the integration failing, that reported cached
+  // synthetic data as live — the exact substitution the product forbids.
+  // Origin must travel with the data, not be re-derived from configuration.
+  const warmed = await warmChart("p-origin-cache");
+  const read = readChart("p-origin-cache");
+  assert.equal(
+    read.simulated,
+    warmed.simulated,
+    "a cache hit must report the origin it was stored with"
+  );
+  assert.equal(read.simulated, true, "this slice came from the fixture, so it stays labelled simulated");
+});
+
 test("ADVERSARIAL: pilot mode refuses to serve a fixture chart", async () => {
   process.env.PROLOGUE_MODE = "pilot";
   await assert.rejects(() => warmChart("p-pilot"), IntegrationUnavailableError);

@@ -4,6 +4,8 @@ import { InvalidTransitionError } from "@/lib/intake";
 import { runtimeMode } from "@/lib/runtime";
 import type { StoryMap } from "@/lib/types";
 import { PATIENT_ID } from "@/lib/fixtures";
+import { persistSession, loadQueue, loadSession, claimDurable } from "@/lib/durableStore";
+import { databaseConfigured } from "@/lib/db/client";
 
 export const dynamic = "force-dynamic";
 
@@ -18,11 +20,19 @@ export async function POST(req: Request) {
       patientId: body.patientId ?? body.patient?.id ?? PATIENT_ID,
       appointmentId: body.appointmentId,
     });
+
+    // Write through to durable storage. The in-memory copy still answers this
+    // request; `durable` tells the caller honestly whether the session would
+    // survive a restart, rather than implying persistence that did not happen.
+    const persisted = await persistSession(session);
+
     return NextResponse.json({
       ok: true,
       id: session.id,
       state: session.state,
       updatedAt: session.updatedAt,
+      durable: persisted.ok,
+      durableError: persisted.ok ? undefined : persisted.error,
       // A signed session is terminal; tell the client its write was not applied.
       accepted: session.state !== "signed" || session.map === body,
     });
@@ -49,6 +59,19 @@ export async function PATCH(req: Request) {
     const existing = getSession(sessionId);
     if (!existing) return NextResponse.json({ error: "unknown session" }, { status: 404 });
 
+    // Durable claim first: it is the version-guarded one, so two clinicians on
+    // two instances cannot both win. A conflict must surface as 409, not as a
+    // silently shared case.
+    if (action === "claim" && databaseConfigured) {
+      const d = await claimDurable(sessionId, clinicianId ?? "unknown-clinician");
+      if (d.conflict) {
+        return NextResponse.json(
+          { error: "session was claimed or changed by someone else", conflict: true },
+          { status: 409 }
+        );
+      }
+    }
+
     const to = action === "claim" ? "under_review" : "ready_for_review";
     const s = transition(sessionId, to);
     if (action === "claim" && clinicianId) s.assignedTo = clinicianId;
@@ -72,8 +95,33 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
 
   if (url.searchParams.get("queue")) {
+    // Durable queue when available: a queue read from one instance's memory is
+    // wrong the moment a second instance serves a patient.
+    const durable = await loadQueue();
+    if (durable) {
+      return NextResponse.json({
+        mode: runtimeMode(),
+        source: "durable",
+        sessions: durable.map((d) => ({
+          id: d.externalId ?? d.id,
+          patientId: d.patientRef,
+          patient: d.map?.patient?.name ?? d.patientRef,
+          state: d.state,
+          locale: d.locale,
+          updatedAt: d.updatedAt,
+          version: d.version,
+          urgency: d.map?.escalation?.severity ?? null,
+          escalationRule: d.map?.escalation?.ruleId ?? null,
+          itemCount: d.map?.items?.length ?? 0,
+          safetyCovered: d.safetyCovered,
+          escalated: d.escalated,
+        })),
+      });
+    }
+
     return NextResponse.json({
       mode: runtimeMode(),
+      source: "memory",
       sessions: listSessions().map((s) => ({
         id: s.id,
         patientId: s.patientId,
@@ -91,7 +139,31 @@ export async function GET(req: Request) {
 
   const id = url.searchParams.get("id");
   const session = id ? getSession(id) : latestSession();
-  if (!session) return NextResponse.json({ session: null, mode: runtimeMode() });
+
+  if (!session) {
+    // Memory lost it (restart, or a different instance). Durable storage is the
+    // reason that is now recoverable instead of terminal.
+    if (id) {
+      const d = await loadSession(id);
+      if (d) {
+        return NextResponse.json({
+          mode: runtimeMode(),
+          source: "durable",
+          session: {
+            id: d.externalId ?? d.id,
+            patientId: d.patientRef,
+            state: d.state,
+            locale: d.locale,
+            updatedAt: d.updatedAt,
+            version: d.version,
+            assignedTo: null,
+            map: d.map,
+          },
+        });
+      }
+    }
+    return NextResponse.json({ session: null, mode: runtimeMode() });
+  }
 
   // READS ARE SIDE-EFFECT FREE.
   // This previously moved ready_for_review -> under_review on GET, so polling or
