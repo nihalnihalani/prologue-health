@@ -9,7 +9,7 @@
 
 import { test } from "vitest";
 import assert from "node:assert/strict";
-import { DG_FUNCTIONS, DG_AUTH_SUBPROTOCOL } from "../lib/deepgram-live";
+import { DG_FUNCTIONS, DG_AUTH_SUBPROTOCOL, isEchoOfAgent } from "../lib/deepgram-live";
 import { keyterms } from "../lib/fixtures";
 import { LOCALE_KEYS } from "../lib/i18n";
 
@@ -81,4 +81,38 @@ test("the JWT from /api/deepgram-token is offered as 'bearer', never 'token'", (
 test("the eligibility tool forbids stating a total price", () => {
   const el = DG_FUNCTIONS.find((f) => f.name === "run_eligibility_check")!;
   assert.match(el.description, /does NOT return a total price/i);
+});
+
+test("echo of the agent's own speech is not accepted as a patient turn", () => {
+  // Captured verbatim from a live session on laptop speakers: Prologue's own
+  // chart-aware question came back through the microphone and Deepgram
+  // transcribed it with role "user". Untreated, the agent answers itself and
+  // the patient's real turn is lost — the symptom being "it isn't listening,
+  // it just keeps talking".
+  const agentSaid = [
+    "That helps. One thing I want to check, and it may be nothing, your record " +
+      "shows you started lamotrigine about three weeks ago.",
+  ];
+  assert.equal(
+    isEchoOfAgent(
+      "That helps. One thing I want to check, and it may be nothing, your record " +
+        "shows you started lamotrigine about three weeks ago.",
+      agentSaid
+    ),
+    true,
+    "the agent's own line must never be recorded as something the patient said"
+  );
+});
+
+test("echo suppression never swallows a real patient turn", () => {
+  const agentSaid = ["Your record shows you started lamotrigine about three weeks ago."];
+  // Genuine answers, including ones that share vocabulary with the question.
+  for (const real of [
+    "Yeah, my psychiatrist added it last month.",
+    "I've got this rash on both arms and some on my chest.",
+    "No.",
+    "I stopped the furosemide months ago.",
+  ]) {
+    assert.equal(isEchoOfAgent(real, agentSaid), false, `must not suppress: "${real}"`);
+  }
 });

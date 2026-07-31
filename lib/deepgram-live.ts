@@ -147,6 +147,41 @@ class Player {
 }
 
 /* ------------------------------------------------------------------ */
+/* echo suppression                                                    */
+/* ------------------------------------------------------------------ */
+
+function normalise(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Is this "user" transcript actually the agent's own voice coming back?
+ *
+ * Deliberately conservative in one direction: suppressing a real patient turn
+ * is far worse than letting one echo through, so this only fires on a strong
+ * match — containment either way, or a high word-overlap ratio against
+ * something the agent said moments ago. Short utterances ("no", "yes") are
+ * never suppressed, because they are both common patient answers and too short
+ * to match reliably.
+ */
+export function isEchoOfAgent(candidate: string, recentAgentLines: string[]): boolean {
+  const c = normalise(candidate);
+  if (c.split(" ").length < 5) return false;
+
+  for (const line of recentAgentLines) {
+    const a = normalise(line);
+    if (!a) continue;
+    if (a.includes(c) || c.includes(a)) return true;
+
+    const agentWords = new Set(a.split(" "));
+    const candWords = c.split(" ");
+    const overlap = candWords.filter((w) => agentWords.has(w)).length / candWords.length;
+    if (overlap >= 0.8) return true;
+  }
+  return false;
+}
+
+/* ------------------------------------------------------------------ */
 /* tool declarations                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -226,6 +261,8 @@ export async function connectDeepgram(opts: {
 
   const player = new Player();
   let isOpen = false;
+  /** What the agent said recently, for echo detection. */
+  const recentAgentLines: string[] = [];
   let keepAlive: ReturnType<typeof setInterval> | null = null;
   let userBuf = "";
 
@@ -233,24 +270,15 @@ export async function connectDeepgram(opts: {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   };
 
-  /* ---------------- microphone ---------------- */
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-  });
-  const Ctor =
-    window.AudioContext ??
-    (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-  const micCtx = new Ctor({ sampleRate: INPUT_RATE });
-  const source = micCtx.createMediaStreamSource(stream);
-  const node = micCtx.createScriptProcessor(4096, 1, 1);
-
-  node.onaudioprocess = (e) => {
-    if (!isOpen || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(floatTo16BitPCM(e.inputBuffer.getChannelData(0)));
-  };
-  source.connect(node);
-  node.connect(micCtx.destination);
-
+  // Register the open handler BEFORE any await.
+  //
+  // getUserMedia() below can block for seconds while the browser shows its
+  // microphone permission prompt. The socket keeps connecting during that time,
+  // so if the handler were attached afterwards the 'open' event would fire with
+  // nothing listening and be lost forever — no Settings sent, isOpen never true,
+  // and every captured frame silently dropped. The agent would appear to
+  // connect and then be completely deaf, intermittently, depending on which
+  // finished first.
   ws.onopen = () => {
     isOpen = true;
 
@@ -287,6 +315,69 @@ export async function connectDeepgram(opts: {
     opts.callbacks.onOpen?.();
   };
 
+  /* ---------------- microphone ---------------- */
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+  const Ctor =
+    window.AudioContext ??
+    (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const micCtx = new Ctor({ sampleRate: INPUT_RATE });
+  const source = micCtx.createMediaStreamSource(stream);
+  const node = micCtx.createScriptProcessor(4096, 1, 1);
+
+  // ---- capture diagnostics -------------------------------------------------
+  // The capture path has three ways to die silently (context suspended, socket
+  // not open yet, callback never firing) and all three look identical from the
+  // outside: the agent talks and never hears you. Count them separately.
+  let framesSeen = 0;
+  let framesSent = 0;
+  let framesDroppedNotOpen = 0;
+  let peak = 0;
+  // Opt-in: localStorage.setItem("prologue:debugAudio", "1") in the console.
+  // Capture failures are invisible from the UI, so this exists to make them
+  // observable without shipping a permanent console firehose.
+  const debugAudio =
+    typeof localStorage !== "undefined" && localStorage.getItem("prologue:debugAudio") === "1";
+  if (debugAudio) {
+    console.log(`[dg-mic] context created state=${micCtx.state} rate=${micCtx.sampleRate}`);
+  }
+
+  node.onaudioprocess = (e) => {
+    framesSeen++;
+    const buf = e.inputBuffer.getChannelData(0);
+    for (let i = 0; i < buf.length; i += 128) peak = Math.max(peak, Math.abs(buf[i]));
+    if (!isOpen || ws.readyState !== WebSocket.OPEN) {
+      framesDroppedNotOpen++;
+      return;
+    }
+    ws.send(floatTo16BitPCM(buf));
+    framesSent++;
+  };
+  source.connect(node);
+
+  // A ScriptProcessorNode only fires while it has a path to the destination, so
+  // it must be connected — but connecting it DIRECTLY to the speakers monitors
+  // the microphone out loud. The patient hears themselves, and worse, that
+  // output is re-captured, which trips UserStartedSpeaking and barge-in on the
+  // agent's own echo. Route through a silent gain node instead: the callback
+  // still runs, nothing is played back.
+  const silentSink = micCtx.createGain();
+  silentSink.gain.value = 0;
+  node.connect(silentSink);
+  silentSink.connect(micCtx.destination);
+
+  const micDiag = setInterval(() => {
+    if (!debugAudio) return;
+    console.log(
+      `[dg-mic] state=${micCtx.state} seen=${framesSeen} sent=${framesSent} ` +
+        `dropped(not-open)=${framesDroppedNotOpen} peakAmplitude=${peak.toFixed(4)} ` +
+        `isOpen=${isOpen} ws=${ws.readyState}`
+    );
+    peak = 0;
+  }, 2000);
+
+
   ws.onmessage = async (ev: MessageEvent) => {
     // Binary frames are agent audio.
     if (ev.data instanceof ArrayBuffer) {
@@ -303,6 +394,7 @@ export async function connectDeepgram(opts: {
 
     switch (msg.type) {
       case "UserStartedSpeaking":
+        if (debugAudio) console.log("[dg-msg] UserStartedSpeaking (VAD detected your voice)");
         // Barge-in. Kill playback before the next buffer lands.
         player.flush();
         opts.callbacks.onBargeIn();
@@ -311,6 +403,31 @@ export async function connectDeepgram(opts: {
       case "ConversationText": {
         const role = String(msg.role ?? "");
         const content = String(msg.content ?? "");
+        if (debugAudio) console.log(`[dg-msg] ConversationText ${role}: ${content}`);
+
+        // Acoustic echo suppression.
+        //
+        // On a laptop speaker the agent's own TTS reaches the microphone and
+        // comes back as a "user" transcript. The browser's echo canceller does
+        // not catch it because playback happens on a separate 24 kHz
+        // AudioContext that the 16 kHz capture graph never references. Left
+        // alone the agent answers itself in a loop, and the patient's real turn
+        // is buried — which presents exactly as "it isn't listening, it just
+        // keeps talking".
+        //
+        // Content matching is the reliable signal here: we know precisely what
+        // we just said, so a "user" turn that repeats it is echo, not speech.
+        if (role === "user" && isEchoOfAgent(content, recentAgentLines)) {
+          console.log("[dg-msg] suppressed echo of the agent's own speech");
+          opts.callbacks.onError?.(
+            "echo-suppressed: the microphone is picking up the agent. Use headphones for a clean conversation."
+          );
+          break;
+        }
+        if (role === "assistant") {
+          recentAgentLines.push(content);
+          if (recentAgentLines.length > 6) recentAgentLines.shift();
+        }
         if (role === "user") {
           userBuf = content;
           opts.callbacks.onUserTranscript(content, true);
@@ -389,6 +506,7 @@ export async function connectDeepgram(opts: {
   ws.onerror = () => opts.callbacks.onError?.("websocket error");
   ws.onclose = (e) => {
     isOpen = false;
+    clearInterval(micDiag);
     if (keepAlive) clearInterval(keepAlive);
     player.close();
     opts.callbacks.onClose?.(e.reason || "closed");
@@ -405,6 +523,7 @@ export async function connectDeepgram(opts: {
     },
     close() {
       isOpen = false;
+      clearInterval(micDiag);
       if (keepAlive) clearInterval(keepAlive);
       try {
         node.disconnect();

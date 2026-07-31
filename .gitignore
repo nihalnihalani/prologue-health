@@ -8,3 +8,10 @@ dist/
 .vercel
 
 tsconfig.tsbuildinfo
+
+# Large local media working directory (video renders, VO, mixes).
+# These are hundreds of MB of binaries and must never enter git history.
+video/
+*.mp3
+*.mp4
+*.wav
