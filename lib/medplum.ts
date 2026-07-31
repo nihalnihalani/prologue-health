@@ -8,7 +8,14 @@
  */
 
 import { MedplumClient } from "@medplum/core";
-import { chartSlice, emptyChartSlice, calendarDaysAgo, type ChartSlice, PATIENT_ID } from "./fixtures";
+import {
+  chartSlice,
+  emptyChartSlice,
+  calendarDaysAgo,
+  type ChartSlice,
+  PATIENT_ID,
+  FIXTURE_IDENTIFIER_SYSTEM,
+} from "./fixtures";
 import { assertFixtureAllowed } from "./runtime";
 
 export interface Timed<T> {
@@ -27,6 +34,8 @@ export const medplumConfigured = Boolean(clientId && clientSecret);
 
 let client: MedplumClient | null = null;
 let authPromise: Promise<void> | null = null;
+/** Reason the client is unavailable. Surfaced to the write receipt, not just the console. */
+let lastAuthError: string | undefined;
 
 async function getClient(): Promise<MedplumClient | null> {
   if (!medplumConfigured) return null;
@@ -36,6 +45,7 @@ async function getClient(): Promise<MedplumClient | null> {
       .startClientLogin(clientId!, clientSecret!)
       .then(() => undefined)
       .catch((err) => {
+        lastAuthError = err?.message;
         console.error("[medplum] client login failed, falling back to fixture:", err?.message);
         client = null;
         throw err;
@@ -60,6 +70,49 @@ async function getClient(): Promise<MedplumClient | null> {
 const warmCache = new Map<string, { at: number; slice: ChartSlice }>();
 const WARM_TTL_MS = 5 * 60_000;
 
+/** Business key -> Medplum's real, server-assigned Patient id. */
+const livePatientIdCache = new Map<string, string>();
+
+export interface PatientIdResolution {
+  /** The real, server-assigned Patient id. Null when resolution failed for any reason. */
+  id: string | null;
+  /** Why resolution failed. Present only when id is null. */
+  reason?: string;
+}
+
+/**
+ * Resolve the app's stable business key (e.g. PATIENT_ID) to the real Medplum
+ * Patient id.
+ *
+ * Medplum does not support a client-chosen resource id, so the app's literal
+ * "maria-delgado-synthetic" key can never BE the live Patient's id — it can
+ * only be looked up by the identifier scripts/seedMaria.ts stamps onto the
+ * seeded Patient.
+ *
+ * A read (warmChart) can safely fall back to the business key on failure —
+ * an unmatched search is just an honestly empty chart. A write must not:
+ * building a resource's subject/patient reference from the unresolved
+ * business key would fabricate a link to a Patient id that doesn't exist.
+ * The `reason` field exists so a write path can refuse and say why, instead
+ * of silently degrading.
+ */
+export async function resolveLivePatientId(patientId: string): Promise<PatientIdResolution> {
+  const cached = livePatientIdCache.get(patientId);
+  if (cached) return { id: cached };
+  const c = await getClient();
+  if (!c) return { id: null, reason: lastAuthError ?? "medplum client unavailable" };
+  try {
+    const found = await c.searchOne("Patient", `identifier=${FIXTURE_IDENTIFIER_SYSTEM}|${patientId}`);
+    if (!found?.id) {
+      return { id: null, reason: `no live Patient found with identifier ${FIXTURE_IDENTIFIER_SYSTEM}|${patientId}` };
+    }
+    livePatientIdCache.set(patientId, found.id);
+    return { id: found.id };
+  } catch (err) {
+    return { id: null, reason: (err as Error)?.message ?? String(err) };
+  }
+}
+
 /**
  * Pre-warm the patient's chart slice.
  *
@@ -79,10 +132,11 @@ export async function warmChart(patientId: string = PATIENT_ID): Promise<Timed<C
   }
 
   try {
+    const livePatientId = (await resolveLivePatientId(patientId)).id ?? patientId;
     const [meds, conds, allergies] = await Promise.all([
-      c.searchResources("MedicationRequest", { patient: patientId, status: "active" }),
-      c.searchResources("Condition", { patient: patientId }),
-      c.searchResources("AllergyIntolerance", { patient: patientId }),
+      c.searchResources("MedicationRequest", { patient: livePatientId, status: "active" }),
+      c.searchResources("Condition", { patient: livePatientId }),
+      c.searchResources("AllergyIntolerance", { patient: livePatientId }),
     ]);
 
     /**
@@ -182,11 +236,26 @@ export async function finalizeComposition(
   }
 }
 
+/** Outcome of persisting a single resource. Never claims an id for a write that did not happen. */
+export interface ResourceWriteResult {
+  resourceType: string;
+  ok: boolean;
+  id?: string;
+  error?: string;
+}
+
 /**
  * Write draft resources. NEVER writes a final status — the approval handler owns
  * that transition, and nothing here may bypass it.
+ *
+ * Each resource is created independently (Promise.allSettled): one resource
+ * failing FHIR validation must not fail resources that would otherwise have
+ * persisted. Partial success is reported per-resource, never rounded up to a
+ * single pass/fail for the whole batch.
  */
-export async function writeDraft(resources: Record<string, unknown>[]): Promise<Timed<{ written: number; ids: string[] }>> {
+export async function writeDraft(
+  resources: Record<string, unknown>[]
+): Promise<Timed<{ written: number; ids: string[]; results: ResourceWriteResult[] }>> {
   const t0 = performance.now();
 
   for (const r of resources) {
@@ -201,30 +270,46 @@ export async function writeDraft(resources: Record<string, unknown>[]): Promise<
   const c = await getClient();
   if (!c) {
     return {
-      data: { written: resources.length, ids: resources.map((r) => `local/${r.resourceType}`) },
+      data: {
+        written: resources.length,
+        ids: resources.map((r) => `local/${r.resourceType}`),
+        results: resources.map((r) => ({
+          resourceType: String(r.resourceType),
+          ok: false,
+          error: lastAuthError ?? "medplum client unavailable",
+        })),
+      },
       ms: Math.round(performance.now() - t0),
       simulated: true,
     };
   }
 
-  try {
-    const created = await Promise.all(
-      resources.map((r) => c.createResource(r as Parameters<typeof c.createResource>[0]))
-    );
-    return {
-      data: {
-        written: created.length,
-        ids: created.map((x: { resourceType?: string; id?: string }) => `${x.resourceType}/${x.id}`),
-      },
-      ms: Math.round(performance.now() - t0),
-      simulated: false,
-    };
-  } catch (err) {
-    console.error("[medplum] write failed:", (err as Error)?.message);
-    return {
-      data: { written: 0, ids: [] },
-      ms: Math.round(performance.now() - t0),
-      simulated: true,
-    };
-  }
+  const settled = await Promise.allSettled(
+    resources.map((r) => c.createResource(r as Parameters<typeof c.createResource>[0]))
+  );
+
+  const results: ResourceWriteResult[] = settled.map((s, i) => {
+    const resourceType = String(resources[i].resourceType);
+    if (s.status === "fulfilled") {
+      const created = s.value as { id?: string };
+      return { resourceType, ok: true, id: created.id };
+    }
+    const message = (s.reason as Error)?.message ?? String(s.reason);
+    console.error(`[medplum] write failed for ${resourceType}:`, message);
+    return { resourceType, ok: false, error: message };
+  });
+
+  const succeeded = results.filter((r) => r.ok);
+  const failed = results.filter((r) => !r.ok);
+
+  return {
+    data: {
+      written: succeeded.length,
+      ids: succeeded.map((r) => `${r.resourceType}/${r.id}`),
+      results,
+    },
+    ms: Math.round(performance.now() - t0),
+    simulated: false,
+    detail: failed.length ? failed.map((r) => `${r.resourceType}: ${r.error}`).join("; ") : undefined,
+  };
 }
