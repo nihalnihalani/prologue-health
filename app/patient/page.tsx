@@ -8,19 +8,44 @@ import type { ChartSlice } from "@/lib/fixtures";
 import { Timeline, ItemRow, Reconciliation, BenefitsCard, CallLog, EscalationCard } from "@/components/StoryMap";
 import { MARIA_SCRIPT, listen, speak, speechRecognitionCtor, type Listener } from "@/lib/voice";
 import { connectLive, chartSummaryFor, voiceForLocale, type LiveHandle } from "@/lib/gemini-live";
+import { connectDeepgram, type DgHandle, type DgLatency } from "@/lib/deepgram-live";
 import { t, LOCALES, LOCALE_KEYS, isRTL, type Locale } from "@/lib/i18n";
 import { checkRedFlags } from "@/lib/clinical";
 
 const STORE_KEY = "prologue:storymap";
 
-type Mode = "gemini" | "browser" | "scripted";
+/**
+ * Voice routing.
+ *   deepgram — ENGLISH. Nova-3 Medical + keyterm prompting over this patient's
+ *              own drug list. Drug-name accuracy is the biggest live risk and
+ *              this is the strongest mitigation in the stack.
+ *   gemini   — EVERY OTHER LANGUAGE. Native audio detects and switches language
+ *              automatically; Deepgram would need the language declared.
+ *   browser  — Web Speech API. A real mic, no credentials.
+ *   scripted — deterministic. The demo guarantee.
+ */
+type Mode = "deepgram" | "gemini" | "browser" | "scripted";
 type Turn = { who: "agent" | "patient" | "system"; text: string; barge?: boolean };
+
+/**
+ * English goes to Deepgram for medical-vocabulary accuracy; every other language
+ * goes to Gemini, whose native-audio models detect and switch language on their
+ * own. Falls back to a real browser microphone, then to the deterministic script.
+ */
+function pickMode(locale: Locale, deepgram: boolean, gemini: boolean): Mode {
+  if (locale === "en" && deepgram) return "deepgram";
+  if (locale !== "en" && gemini) return "gemini";
+  if (deepgram && locale === "en") return "deepgram";
+  if (gemini) return "gemini";
+  return speechRecognitionCtor() ? "browser" : "scripted";
+}
 
 export default function PatientPage() {
   const sessionRef = useRef<PrologueSession | null>(null);
   const stopSpeakRef = useRef<() => void>(() => {});
   const listenerRef = useRef<Listener | null>(null);
   const liveRef = useRef<LiveHandle | null>(null);
+  const dgRef = useRef<DgHandle | null>(null);
   const chartRef = useRef<ChartSlice | null>(null);
 
   const [locale, setLocale] = useState<Locale>("en");
@@ -28,7 +53,8 @@ export default function PatientPage() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [consented, setConsented] = useState(false);
   const [mode, setMode] = useState<Mode>("scripted");
-  const [geminiAvailable, setGeminiAvailable] = useState(false);
+  const [available, setAvailable] = useState({ deepgram: false, gemini: false });
+  const [dgLatency, setDgLatency] = useState<DgLatency | null>(null);
   const [liveState, setLiveState] = useState<"idle" | "connecting" | "live" | "error">("idle");
   const [micLive, setMicLive] = useState(false);
   const [partial, setPartial] = useState("");
@@ -76,11 +102,17 @@ export default function PatientPage() {
       }
       sync(s.map);
 
-      const gem = await fetch("/api/gemini-token").then((r) => r.ok).catch(() => false);
-      setGeminiAvailable(gem);
-      setMode(gem ? "gemini" : speechRecognitionCtor() ? "browser" : "scripted");
+      const [dg, gem] = await Promise.all([
+        fetch("/api/deepgram-token").then((r) => r.ok).catch(() => false),
+        fetch("/api/gemini-token").then((r) => r.ok).catch(() => false),
+      ]);
+      setAvailable({ deepgram: dg, gemini: gem });
+      setMode(pickMode(detected, dg, gem));
     })();
-    return () => liveRef.current?.close();
+    return () => {
+      liveRef.current?.close();
+      dgRef.current?.close();
+    };
   }, [sync]);
 
   /* ---- changing language restarts the session cleanly ---- */
@@ -88,7 +120,11 @@ export default function PatientPage() {
     setLocale(next);
     liveRef.current?.close();
     liveRef.current = null;
+    dgRef.current?.close();
+    dgRef.current = null;
+    setDgLatency(null);
     setLiveState("idle");
+    setMode(pickMode(next, available.deepgram, available.gemini));
     const s = new PrologueSession(`sess-${Date.now()}`, next);
     if (chartRef.current) s.attachChart(chartRef.current, backend?.warmMs ?? 0, true);
     sessionRef.current = s;
@@ -151,7 +187,105 @@ export default function PatientPage() {
     [say, sync, locale]
   );
 
-  /* ---- Gemini Live ---- */
+  /**
+   * Tool handler shared by both transports. The engine owns the reasoning;
+   * the voice provider only supplies words.
+   */
+  const handleTool = useCallback(
+    async (name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      const sess = sessionRef.current;
+      const chart = chartRef.current;
+      if (!sess || !chart) return { error: "session not ready" };
+
+      switch (name) {
+        case "check_red_flags": {
+          const flag = checkRedFlags(String(args.transcript ?? ""));
+          if (!flag) return { escalate: false };
+          const spoken = t(locale, flag.patientKey ?? "escalateGeneric");
+          // Deterministic safety outranks the model: cut it off mid-word rather
+          // than hoping it chooses to follow the instruction.
+          dgRef.current?.interruptWith(spoken);
+          return { escalate: true, rule: flag.ruleId, severity: flag.severity, say_exactly: spoken };
+        }
+        case "get_relevant_medications":
+          return {
+            medications: chart.medications.map((m) => ({
+              name: m.name,
+              started_days_ago: m.startedDaysAgo,
+              dosage: m.dosage,
+            })),
+          };
+        case "run_eligibility_check": {
+          const res = await fetch("/api/eligibility", { method: "POST" });
+          const j = await res.json();
+          sess.attachBenefits(j.benefits, j.ms);
+          sync(sess.map);
+          return {
+            active: j.benefits.active,
+            copays: j.benefits.copays,
+            deductible_remaining: j.benefits.deductibleRemaining,
+            note: "Benefits only. Never state a total price.",
+          };
+        }
+        case "save_confirmed_statement":
+          return { saved: true, status: "draft" };
+        default:
+          return { error: "unknown tool" };
+      }
+    },
+    [locale, sync]
+  );
+
+  /* ---- Deepgram Voice Agent (English) ---- */
+  const startDeepgram = async () => {
+    const s = sessionRef.current;
+    const chart = chartRef.current;
+    if (!s || !chart) return;
+    setLiveState("connecting");
+    try {
+      dgRef.current = await connectDeepgram({
+        locale,
+        chartSummary: chartSummaryFor(chart.medications, chart.conditions.map((c) => c.text)),
+        // Closed vocabulary: this patient's own drugs.
+        keyterms: [
+          ...chart.medications.map((m) => m.name),
+          "lamotrigine",
+          "divalproex",
+          "furosemide",
+          "rash",
+          "mucosal",
+          "blistering",
+        ],
+        greeting: s.opening(),
+        callbacks: {
+          onOpen: () => setLiveState("live"),
+          onClose: () => setLiveState("idle"),
+          onError: (m) => {
+            console.error("[deepgram]", m);
+            setLiveState("error");
+          },
+          onLatency: (l) => setDgLatency(l),
+          onBargeIn: () =>
+            setTurns((prev) => [...prev, { who: "system", text: "— patient interrupted —" }]),
+          onUserTranscript: (text, isFinal) => {
+            if (!isFinal) return setPartial(text);
+            setPartial("");
+            void handlePatientUtterance(text, Math.round(performance.now() / 1000), undefined, false);
+          },
+          onAgentTranscript: (text, isFinal) => {
+            if (isFinal) setTurns((prev) => [...prev, { who: "agent", text }]);
+          },
+          onToolCall: handleTool,
+        },
+      });
+    } catch (err) {
+      console.error(err);
+      setLiveState("error");
+      setMode(speechRecognitionCtor() ? "browser" : "scripted");
+    }
+  };
+
+  /* ---- Gemini Live (non-English) ---- */
   const startLive = async () => {
     const s = sessionRef.current;
     const chart = chartRef.current;
@@ -181,41 +315,7 @@ export default function PatientPage() {
           onInterrupted: () => {
             setTurns((t) => [...t, { who: "system", text: "— patient interrupted —" }]);
           },
-          onToolCall: async (name, args) => {
-            const sess = sessionRef.current!;
-            switch (name) {
-              case "check_red_flags": {
-                const flag = checkRedFlags(String(args.transcript ?? ""));
-                return flag
-                  ? { escalate: true, rule: flag.ruleId, instruction: t(locale, flag.patientKey ?? "escalateGeneric") }
-                  : { escalate: false };
-              }
-              case "get_relevant_medications":
-                return {
-                  medications: chart.medications.map((m) => ({
-                    name: m.name,
-                    startedDaysAgo: m.startedDaysAgo,
-                    dosage: m.dosage,
-                  })),
-                };
-              case "run_eligibility_check": {
-                const res = await fetch("/api/eligibility", { method: "POST" });
-                const j = await res.json();
-                sess.attachBenefits(j.benefits, j.ms);
-                sync(sess.map);
-                return {
-                  active: j.benefits.active,
-                  copays: j.benefits.copays,
-                  deductibleRemaining: j.benefits.deductibleRemaining,
-                  note: "Benefits only. Do not state a total price.",
-                };
-              }
-              case "save_confirmed_statement":
-                return { saved: true, status: "draft" };
-              default:
-                return { error: "unknown tool" };
-            }
-          },
+          onToolCall: handleTool,
         },
       });
       liveRef.current = handle;
@@ -232,7 +332,9 @@ export default function PatientPage() {
     s.grantConsent();
     setConsented(true);
     sync(s.map);
-    if (mode === "gemini") {
+    if (mode === "deepgram") {
+      void startDeepgram();       // the greeting is spoken by the agent itself
+    } else if (mode === "gemini") {
       void startLive();
     } else {
       say(s.opening());
@@ -297,9 +399,22 @@ export default function PatientPage() {
             </option>
           ))}
         </select>
-        <span className={`chip ${geminiAvailable ? "live" : "sim"}`}>
-          {mode === "gemini" ? `Gemini Live · ${liveState}` : mode === "browser" ? "browser mic" : "scripted"}
+        <span className={`chip ${mode === "deepgram" || mode === "gemini" ? "live" : "sim"}`}>
+          {mode === "deepgram"
+            ? `Deepgram nova-3-medical · ${liveState}`
+            : mode === "gemini"
+              ? `Gemini Live · ${liveState}`
+              : mode === "browser"
+                ? "browser mic"
+                : "scripted"}
         </span>
+        {dgLatency?.total != null && (
+          <span className="chip live" title="Measured on the wire by Deepgram, not estimated">
+            {Math.round(dgLatency.total)} ms turn
+            {dgLatency.stt != null && ` · stt ${Math.round(dgLatency.stt)}`}
+            {dgLatency.tts != null && ` · tts ${Math.round(dgLatency.tts)}`}
+          </span>
+        )}
         <span className="chip sim">synthetic</span>
       </div>
 
@@ -354,7 +469,7 @@ export default function PatientPage() {
             </div>
 
             <div style={{ display: "flex", gap: 8, padding: 12, borderTop: "1px solid var(--line-soft)", flexWrap: "wrap" }}>
-              {mode === "gemini" && liveState === "live" && (
+              {(mode === "deepgram" || mode === "gemini") && liveState === "live" && (
                 <span className="chip live" style={{ flex: 1, textAlign: "center", padding: "10px" }}>
                   🎙 Listening — just speak
                 </span>

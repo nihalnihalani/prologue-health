@@ -18,12 +18,15 @@ export async function GET() {
     const res = await fetch("https://api.deepgram.com/v1/auth/grant", {
       method: "POST",
       headers: { Authorization: `Token ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ ttl_seconds: 60 }),
+      body: JSON.stringify({ ttl_seconds: 60, ttl: 60 }),
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) throw new Error(`grant ${res.status}`);
     const json = await res.json();
-    return NextResponse.json({ token: json.access_token ?? json.key ?? "" });
+    return NextResponse.json({
+      token: json.access_token ?? json.key ?? "",
+      expiresIn: json.expires_in ?? 60,
+    });
   } catch (err) {
     console.error("[deepgram] token grant failed:", (err as Error).message);
     return NextResponse.json({ error: "grant_failed" }, { status: 503 });
