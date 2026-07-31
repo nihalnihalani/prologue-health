@@ -31,7 +31,10 @@ Prologue is a chart-aware, voice-first pre-visit intake. A patient describes why
 - The production finalization boundary is the clinician approval handler. `writeDraft()` must continue to reject `final` and `completed`. `PrologueSession.approve()` models the transition for engine tests; do not make it another client-authoritative production path.
 - Preserve the distinction between prescribed medication (`MedicationRequest`) and patient-reported use (`MedicationStatement`). Reconciliation must not overwrite either source.
 - A 270/271 response supports benefits and coverage status, not a guaranteed price or prior-authorization determination. Never invent missing payer values.
-- Degradation removes claims and is visible to the user. A fixture, cached value, or failed integration must never be presented as live data.
+- Degradation removes claims and is visible to the user. A fixture, cached value, or failed integration must never be presented as live data. An empty live chart is empty; a 271 missing a benefit declares it missing. Neither is backfilled from the fixture.
+- Every promotable (generated) item requires an explicit clinician approve, edit, or reject. Silence is not consent, and a rejected finding must never become a clinical resource — it stays auditable in the StoryMap and the AuditEvent instead.
+- `lib/clinical.ts` red-flag rules are validated for English only (`SAFETY_RULE_LOCALES`). A non-English intake records a visible coverage gap: "not screened" must never be presented as "nothing found". Adding a UI language does not add safety coverage.
+- No audio is captured or stored. Any control that plays speech must say it is synthesised from the transcript.
 
 ## Prototype boundaries to address during product work
 

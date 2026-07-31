@@ -8,7 +8,7 @@
  */
 
 import { MedplumClient } from "@medplum/core";
-import { chartSlice, calendarDaysAgo, type ChartSlice, PATIENT_ID } from "./fixtures";
+import { chartSlice, emptyChartSlice, calendarDaysAgo, type ChartSlice, PATIENT_ID } from "./fixtures";
 import { assertFixtureAllowed } from "./runtime";
 
 export interface Timed<T> {
@@ -83,9 +83,18 @@ export async function warmChart(patientId: string = PATIENT_ID): Promise<Timed<C
       c.searchResources("AllergyIntolerance", { patient: patientId }),
     ]);
 
-    const fixture = chartSlice();
+    /**
+     * A live read returns what the chart actually holds — including nothing.
+     *
+     * This previously spread the fixture and backfilled any empty array from it
+     * while still reporting `simulated: false`, so a patient with no recorded
+     * medications would have been shown someone else's drug list labeled live.
+     * An empty chart is a legitimate clinical answer and must be reported as
+     * empty.
+     */
+    const empty = emptyChartSlice(patientId);
     const slice: ChartSlice = {
-      ...fixture,
+      ...empty,
       medications: meds.length
         ? meds.map((m) => {
             const authored = (m as { authoredOn?: string }).authoredOn;
@@ -102,13 +111,13 @@ export async function warmChart(patientId: string = PATIENT_ID): Promise<Timed<C
               status: (m as { status?: string }).status ?? "active",
             };
           })
-        : fixture.medications,
+        : [],
       conditions: conds.length
         ? conds.map((x: { id?: string; code?: { text?: string } }) => ({ id: x.id ?? "", text: x.code?.text ?? "" }))
-        : fixture.conditions,
+        : [],
       allergies: allergies.length
         ? allergies.map((x: { id?: string; code?: { text?: string } }) => ({ id: x.id ?? "", text: x.code?.text ?? "" }))
-        : fixture.allergies,
+        : [],
     };
 
     warmCache.set(patientId, { at: Date.now(), slice });

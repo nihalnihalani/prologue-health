@@ -76,17 +76,34 @@ function parse271(raw: unknown): Benefits {
     }
   }
 
+  /**
+   * A live 271 is reported exactly as received.
+   *
+   * This previously backfilled every missing field from the demo fixture while
+   * still reporting `simulated: false` — so a payer response that omitted
+   * copays would have shown the demo patient's dollar figures as though they
+   * were this patient's real benefits. Missing is missing.
+   */
+  const missing: string[] = [];
+  if (!copays.length) missing.push("copay");
+  if (coinsurancePercent === undefined) missing.push("coinsurance");
+  if (deductibleRemaining === undefined) missing.push("deductibleRemaining");
+
   return {
-    planName: r.planInformation?.groupDescription || "Aetna PPO",
+    planName: r.planInformation?.groupDescription || "Unknown plan",
     active: (r.planStatus ?? []).some((p) => p.statusCode === "1"),
-    copays: copays.length ? copays : fixtureBenefits.copays,
-    coinsurancePercent: coinsurancePercent ?? fixtureBenefits.coinsurancePercent,
-    deductibleTotal: deductibleTotal ?? fixtureBenefits.deductibleTotal,
-    deductibleRemaining: deductibleRemaining ?? fixtureBenefits.deductibleRemaining,
+    copays,
+    coinsurancePercent,
+    deductibleTotal,
+    deductibleRemaining,
     simulated: false,
+    missingFields: missing.length ? missing : undefined,
     raw,
   };
 }
+
+/** Test seam: exercise 271 parsing without a network call. */
+export const __parse271ForTest = parse271;
 
 export async function checkEligibility(input: EligibilityInput): Promise<Timed<Benefits>> {
   const t0 = performance.now();

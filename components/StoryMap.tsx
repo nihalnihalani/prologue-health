@@ -251,8 +251,15 @@ export function ItemRow({
       </div>
 
       {audience === "clinician" && item.verbatim && onPlay && (
-        <button className="btn" onClick={() => onPlay(item)} title="Hear what the patient said">
-          ▶ {item.atSeconds != null ? `${Math.floor(item.atSeconds / 60)}:${String(item.atSeconds % 60).padStart(2, "0")}` : "play"}
+        <button
+          className="btn"
+          onClick={() => onPlay(item)}
+          /* No audio is captured or stored. This reads the transcript aloud with
+             the browser's speech synthesiser — calling it "hear what the patient
+             said" implied a recording that does not exist. */
+          title="Read the transcript aloud (synthesised — no audio is recorded)"
+        >
+          🔊 read aloud
         </button>
       )}
       {audience === "clinician" && onReject && item.source === "INFERRED" && (

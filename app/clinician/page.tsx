@@ -9,7 +9,9 @@ const STORE_KEY = "prologue:storymap";
 
 export default function ClinicianPage() {
   const [map, setMap] = useState<StoryMap | null>(null);
-  const [rejected, setRejected] = useState<string[]>([]);
+  // Explicit ruling per promotable item. No default — an unreviewed item blocks
+  // signing rather than promoting itself.
+  const [ruling, setRuling] = useState<Record<string, "approve" | "reject">>({});
   const [signing, setSigning] = useState(false);
   const [signed, setSigned] = useState<{ at: string; by: string } | null>(null);
   const [playing, setPlaying] = useState<string | null>(null);
@@ -61,8 +63,8 @@ export default function ClinicianPage() {
     return () => { window.removeEventListener("storage", onStorage); clearInterval(t); };
   }, [load]);
 
-  const toggleReject = (id: string) =>
-    setRejected((r) => (r.includes(id) ? r.filter((x) => x !== id) : [...r, id]));
+  const rule = (id: string, d: "approve" | "reject") =>
+    setRuling((r) => ({ ...r, [id]: r[id] === d ? undefined! : d }));
 
   const play = (item: StoryItem) => {
     setPlaying(item.id);
@@ -92,11 +94,12 @@ export default function ClinicianPage() {
       const res = await fetch("/api/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // The pilot secret is server-side only. A NEXT_PUBLIC_ variable would
+        // have shipped it to every browser, which defeats the gate entirely.
         body: JSON.stringify({
           sessionId,
           clinicianId: "practitioner-osei",
-          clinicianSecret: process.env.NEXT_PUBLIC_CLINICIAN_SECRET,
-          rejectedIds: rejected,
+          decisions,
         }),
       });
       const j = await res.json();
@@ -132,6 +135,13 @@ export default function ClinicianPage() {
   const record = map.items.filter((i) => i.source === "RECORD");
   const inferred = map.items.filter((i) => i.source === "INFERRED");
   const isFinal = map.compositionStatus === "final";
+  // Only generated content requires a ruling; a verbatim patient statement is
+  // recorded, not asserted by the system.
+  const promotable = map.items.filter((i) => i.source === "INFERRED");
+  const decisions = promotable
+    .filter((i) => ruling[i.id])
+    .map((i) => ({ itemId: i.id, decision: ruling[i.id] }));
+  const undecided = promotable.length - decisions.length;
 
   return (
     <main style={{ maxWidth: 1180, margin: "0 auto", padding: "18px 18px 24px" }}>
@@ -173,9 +183,16 @@ export default function ClinicianPage() {
           )}
 
           <section className="card">
-            <header><h2>Patient said</h2><span className="chip" style={{ marginLeft: "auto" }}>verbatim · click to hear</span></header>
-            <div>{said.map((i) => <ItemRow key={i.id} item={{ ...i, status: rejected.includes(i.id) ? "rejected" : i.status }} audience="clinician" onPlay={play} />)}</div>
-            {playing && <div className="mono" style={{ padding: "8px 14px", color: "var(--accent)", fontSize: 11 }}>▶ playing…</div>}
+            <header>
+              <h2>Patient said</h2>
+              <span className="chip" style={{ marginLeft: "auto" }}>verbatim transcript</span>
+            </header>
+            <div>{said.map((i) => <ItemRow key={i.id} item={i} audience="clinician" onPlay={play} />)}</div>
+            {playing && (
+              <div className="mono" style={{ padding: "8px 14px", color: "var(--accent)", fontSize: 11 }}>
+                🔊 reading the transcript aloud — synthesised speech, not a recording
+              </div>
+            )}
           </section>
 
           <section className="card">
@@ -183,7 +200,33 @@ export default function ClinicianPage() {
             <div>
               {inferred.length === 0
                 ? <div className="mono muted" style={{ padding: 20, textAlign: "center" }}>No inferences</div>
-                : inferred.map((i) => <ItemRow key={i.id} item={{ ...i, status: rejected.includes(i.id) ? "rejected" : i.status }} audience="clinician" onReject={toggleReject} />)}
+                : inferred.map((i) => (
+                    <div key={i.id}>
+                      <ItemRow
+                        item={{ ...i, status: ruling[i.id] === "reject" ? "rejected" : i.status }}
+                        audience="clinician"
+                      />
+                      <div style={{ display: "flex", gap: 8, padding: "0 14px 12px 32px" }}>
+                        <button
+                          className={`btn ${ruling[i.id] === "approve" ? "primary" : ""}`}
+                          onClick={() => rule(i.id, "approve")}
+                        >
+                          {ruling[i.id] === "approve" ? "✓ approved" : "approve"}
+                        </button>
+                        <button
+                          className={`btn danger ${ruling[i.id] === "reject" ? "danger" : ""}`}
+                          onClick={() => rule(i.id, "reject")}
+                        >
+                          {ruling[i.id] === "reject" ? "✕ rejected" : "reject"}
+                        </button>
+                        {!ruling[i.id] && (
+                          <span className="mono" style={{ fontSize: 10.5, color: "var(--warn)", alignSelf: "center" }}>
+                            needs a decision
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
             </div>
           </section>
 
@@ -234,7 +277,9 @@ export default function ClinicianPage() {
         <div className="mono muted" style={{ fontSize: 11.5 }}>
           {signed
             ? `signed by ${signed.by} · Provenance + AuditEvent written`
-            : `${rejected.length} rejected — nothing has entered the chart`}
+            : undecided > 0
+              ? `${undecided} item${undecided === 1 ? "" : "s"} still need a decision — nothing has entered the chart`
+              : `${decisions.filter((d) => d.decision === "reject").length} rejected · ${decisions.filter((d) => d.decision === "approve").length} approved — not yet signed`}
         </div>
         {signErr && (
           <div className="mono" style={{ fontSize: 11.5, color: "var(--crit)", flexBasis: "100%" }}>
@@ -246,7 +291,13 @@ export default function ClinicianPage() {
             ⚠ {w}
           </div>
         ))}
-        <button className="btn primary big" style={{ marginLeft: "auto" }} onClick={sign} disabled={signing || isFinal}>
+        <button
+          className="btn primary big"
+          style={{ marginLeft: "auto" }}
+          onClick={sign}
+          disabled={signing || isFinal || undecided > 0}
+          title={undecided > 0 ? `${undecided} item(s) still need a decision` : undefined}
+        >
           {isFinal ? "Signed ✓" : signing ? "Signing…" : "Approve & sign"}
         </button>
       </div>
