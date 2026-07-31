@@ -26,8 +26,17 @@ export type Audience = "patient" | "clinician";
 export function Timeline({ model, audience }: { model: TimelineModel; audience: Audience }) {
   const pct = (day: number) => Math.max(0, Math.min(100, (day / model.days) * 100));
 
+  const srTextSummary = model.meds.map((m) => {
+    const risk = m.riskWindow ? `, risk window for ${m.riskWindow.label} starting from day ${m.riskWindow.fromDay} to day ${m.riskWindow.toDay}` : "";
+    return `${m.name} started on day ${m.startDay}${risk}.`;
+  }).join(" ");
+
   return (
     <div style={{ padding: "18px 14px 6px" }}>
+      {/* Screen-reader-only accessible text alternative */}
+      <div style={{ position: "absolute", width: "1px", height: "1px", padding: 0, margin: "-1px", overflow: "hidden", clip: "rect(0, 0, 0, 0)", border: 0 }}>
+        Timeline summary: {srTextSummary}
+      </div>
       {model.meds.map((m) => {
         const left = pct(Math.max(0, m.startDay));
         const w = m.riskWindow;
@@ -411,9 +420,11 @@ export function BenefitsCard({ b }: { b: Benefits }) {
         )}
       </div>
       <div className="disc" style={{ marginTop: 12 }}>
-        Read directly from the <code>CoverageEligibilityResponse</code> — copay by place of service, coinsurance rate,
-        deductible remaining. <strong>No total cost is estimated.</strong> An eligibility response cannot price a service
-        that hasn&rsquo;t happened yet.
+        {b.simulated ? (
+          <span><strong>Simulated benefit data</strong> (mock response). In a live production deployment, this data is read directly in real-time from a <code>CoverageEligibilityResponse</code> transaction. <strong>No total cost is estimated.</strong></span>
+        ) : (
+          <span>Read directly from the <code>CoverageEligibilityResponse</code> — copay by place of service, coinsurance rate, deductible remaining. <strong>No total cost is estimated.</strong> An eligibility response cannot price a service that hasn&rsquo;t happened yet.</span>
+        )}
       </div>
     </div>
   );

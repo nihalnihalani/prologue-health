@@ -11,6 +11,7 @@ const STORE_KEY = "prologue:storymap";
 
 export default function ClinicianPage() {
   const [map, setMap] = useState<StoryMap | null>(null);
+  const [queueFilter, setQueueFilter] = useState<"review" | "mine" | "completed">("review");
   // Explicit ruling per promotable item. No default — an unreviewed item blocks
   // signing rather than promoting itself.
   const [ruling, setRuling] = useState<Record<string, "approve" | "reject">>({});
@@ -161,7 +162,7 @@ export default function ClinicianPage() {
 
   return (
     <motion.main 
-      initial="hidden" animate="visible" variants={{ visible: { transition: { staggerChildren: 0.1 } } }}
+      initial={false} animate="visible" variants={{ visible: { transition: { staggerChildren: 0.1 } } }}
       style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 20px 40px" }}
     >
       <header style={{ display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap", paddingBottom: 14, borderBottom: "1px solid var(--line)" }}>
@@ -182,7 +183,69 @@ export default function ClinicianPage() {
 
       {map.escalation && <div style={{ margin: "16px 0" }}><EscalationCard map={map} audience="clinician" /></div>}
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,420px)", gap: 18, marginTop: 16, alignItems: "start" }}>
+      <div className="clinician-grid" style={{ gap: 18, marginTop: 16, alignItems: "start" }}>
+        {/* --- Column 1: Queue Rail (280px) --- */}
+        <motion.div variants={cardVariants} className="card" style={{ display: "flex", flexDirection: "column", gap: 12, padding: 14, background: "var(--surface-sunken)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, borderBottom: "1px solid var(--line)", paddingBottom: 8 }}>
+            <ClipboardList size={16} className="muted" />
+            <h2 style={{ fontSize: 13, fontWeight: 700, margin: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>Clinician Queue</h2>
+          </div>
+          
+          <div style={{ display: "flex", gap: 4 }}>
+            <button className="btn" style={{ flex: 1, padding: "6px 8px", fontSize: 11, background: queueFilter === "review" ? "var(--accent-2)" : "var(--surface)", borderColor: queueFilter === "review" ? "var(--accent)" : "var(--line)" }} onClick={() => setQueueFilter("review")}>Active</button>
+            <button className="btn" style={{ flex: 1, padding: "6px 8px", fontSize: 11, background: queueFilter === "mine" ? "var(--accent-2)" : "var(--surface)", borderColor: queueFilter === "mine" ? "var(--accent)" : "var(--line)" }} onClick={() => setQueueFilter("mine")}>Mine</button>
+            <button className="btn" style={{ flex: 1, padding: "6px 8px", fontSize: 11, background: queueFilter === "completed" ? "var(--accent-2)" : "var(--surface)", borderColor: queueFilter === "completed" ? "var(--accent)" : "var(--line)" }} onClick={() => setQueueFilter("completed")}>Done</button>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {/* Active Real Case (Maria) */}
+            {queueFilter !== "completed" && (
+              <div style={{ padding: 10, borderRadius: 6, border: "1px solid var(--accent)", background: "var(--surface)", cursor: "pointer" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <strong style={{ fontSize: 13, color: "var(--ink)" }}>{map.patient.name}</strong>
+                  <span className="chip live" style={{ fontSize: 9, padding: "2px 6px" }}>assigned</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 4 }}>{map.patient.appointment.reason}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--ink-3)", marginTop: 8 }}>
+                  <span>Wait: 22m</span>
+                  <span>screening: active</span>
+                </div>
+              </div>
+            )}
+
+            {/* Simulated Case 1 */}
+            {queueFilter === "review" && (
+              <div style={{ padding: 10, borderRadius: 6, border: "1px solid var(--line)", background: "var(--surface)", opacity: 0.7, cursor: "not-allowed" }} title="This is a demo placeholder">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <strong style={{ fontSize: 13 }}>John Doe</strong>
+                  <span className="chip sim" style={{ fontSize: 9, padding: "2px 6px" }}>unassigned</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 4 }}>Fever and sore throat</div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--ink-3)", marginTop: 8 }}>
+                  <span>Wait: 5m</span>
+                  <span>English (verified)</span>
+                </div>
+              </div>
+            )}
+
+            {/* Simulated Case 2 */}
+            {queueFilter === "completed" && (
+              <div style={{ padding: 10, borderRadius: 6, border: "1px solid var(--line)", background: "var(--surface)", opacity: 0.7, cursor: "not-allowed" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <strong style={{ fontSize: 13 }}>Sarah Jenkins</strong>
+                  <span className="chip live" style={{ fontSize: 9, padding: "2px 6px", background: "var(--provenance-patient-bg)", color: "var(--provenance-patient-fg)" }}>signed</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 4 }}>Routine wellness visit</div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--ink-3)", marginTop: 8 }}>
+                  <span>Signed: Today</span>
+                  <span>completed</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </motion.div>
+
+        {/* --- Column 2: Flexible Central Casefile --- */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {map.openQuestions.length > 0 && (
             <motion.section variants={cardVariants} className="card">
@@ -257,7 +320,7 @@ export default function ClinicianPage() {
           )}
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div className="clinician-right-rail" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {map.timeline && (
             <motion.section variants={cardVariants} className="card">
               <header><FileText size={18} className="muted" /> <h2>Timing</h2></header>
@@ -331,7 +394,7 @@ export default function ClinicianPage() {
                   >
                     {w.status === "written" ? "✓" : w.status === "failed" ? "✕" : "—"} {w.resourceType}
                   </span>{" "}
-                  <span className="muted">
+                  <span className="muted overflow-anywhere">
                     {w.id ? `${w.resourceType}/${w.id}` : w.status === "written" ? "(no id returned)" : w.status}
                     {" · "}
                     {w.origin}

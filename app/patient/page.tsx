@@ -381,7 +381,7 @@ export default function PatientPage() {
 
   return (
     <motion.main 
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}
+      initial={false} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}
       dir={rtl ? "rtl" : "ltr"} 
       style={{ maxWidth: 560, margin: "0 auto", padding: "18px 16px 120px" }}
     >
@@ -441,6 +441,15 @@ export default function PatientPage() {
               <li>{t(locale, "consentBullet2")}</li>
               <li>{t(locale, "consentBullet3")}</li>
             </ul>
+            {locale !== "en" ? (
+              <div style={{ fontSize: 13, color: "var(--warn)", background: "var(--warn-bg)", padding: "10px 14px", borderRadius: 4, marginTop: 12 }}>
+                ⚠️ <strong>Language Notice</strong>: Automated safety checking rules are only validated for English. For non-English transcripts, safety screening is not automatically guaranteed and requires manual clinician review.
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, color: "var(--provenance-patient-fg)", background: "var(--provenance-patient-bg)", padding: "10px 14px", borderRadius: 4, marginTop: 12 }}>
+                ✅ Deterministic safety screening rules are fully active and validated for this English session.
+              </div>
+            )}
             <button className="btn primary big" onClick={grantConsent} style={{ width: "100%", marginTop: 12 }}>
               {t(locale, "consentAccept")}
             </button>
@@ -450,13 +459,15 @@ export default function PatientPage() {
         <motion.div initial="hidden" animate="visible" variants={{ visible: { transition: { staggerChildren: 0.1 } } }}>
           <motion.section variants={cardVariants} className="card" style={{ marginBottom: 14 }}>
             <header>
-              <motion.span 
-                animate={{ opacity: [1, 0.5, 1] }} 
-                transition={{ duration: 2, repeat: Infinity }}
-                aria-hidden="true" 
-                style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--crit)" }} 
-              />
-              <h2>{t(locale, "recording")}</h2>
+              {(micLive || liveState === "live") && (
+                <motion.span 
+                  animate={{ opacity: [1, 0.5, 1] }} 
+                  transition={{ duration: 2, repeat: Infinity }}
+                  aria-hidden="true" 
+                  style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--crit)" }} 
+                />
+              )}
+              <h2>{micLive || liveState === "live" ? t(locale, "recording") : "Intake Session"}</h2>
               <span className="chip" style={{ marginInlineStart: "auto" }}>{LOCALES[locale].bcp47}</span>
             </header>
             <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10, maxHeight: 360, overflowY: "auto" }}>
@@ -505,10 +516,13 @@ export default function PatientPage() {
                   {micLive ? <><MicOff size={16}/> {t(locale, "stopButton")}</> : <><Mic size={16}/> {t(locale, "speakButton")}</>}
                 </button>
               )}
-              <button className="btn big" onClick={nextScripted} disabled={busy || scriptIdx >= MARIA_SCRIPT.length} style={{ flex: 1 }}>
-                <Play size={16} />
-                {scriptIdx >= MARIA_SCRIPT.length ? "Script complete" : `Play scripted line (${scriptIdx + 1}/${MARIA_SCRIPT.length})`}
-              </button>
+              {mode === "scripted" && (
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, alignItems: "center", justifyContent: "center", padding: "6px 0" }}>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                    Scripted Session · expand diagnostics disclosure below to play
+                  </span>
+                </div>
+              )}
             </div>
           </motion.section>
 
@@ -548,13 +562,27 @@ export default function PatientPage() {
             <div className="disc" style={{ margin: 14 }}>{t(locale, "labelDraft")}</div>
           </motion.section>
 
-          <motion.section variants={cardVariants} className="card">
-            <header>
-              <h2>Under the hood</h2>
-              <span className="chip" style={{ marginInlineStart: "auto" }}>chart warm {backend?.warmMs ?? "–"} ms · {backend?.chart}</span>
-            </header>
-            <CallLog calls={map.calls} />
-          </motion.section>
+          <details style={{ marginTop: 24, padding: "14px", border: "1px dashed var(--line)", borderRadius: "var(--r)", background: "var(--surface-2)" }}>
+            <summary className="mono" style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: "var(--ink-2)", outline: "none" }}>
+              Demo Controls & Developer Diagnostics
+            </summary>
+            <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button className="btn big" onClick={nextScripted} disabled={busy || scriptIdx >= MARIA_SCRIPT.length} style={{ flex: 1 }}>
+                  <Play size={16} />
+                  {scriptIdx >= MARIA_SCRIPT.length ? "Script complete" : `Play scripted line (${scriptIdx + 1}/${MARIA_SCRIPT.length})`}
+                </button>
+              </div>
+
+              <motion.section variants={cardVariants} className="card">
+                <header>
+                  <h2>Under the hood</h2>
+                  <span className="chip" style={{ marginInlineStart: "auto" }}>chart warm {backend?.warmMs ?? "–"} ms · {backend?.chart}</span>
+                </header>
+                <CallLog calls={map.calls} />
+              </motion.section>
+            </div>
+          </details>
 
           {done && (
             <motion.div variants={cardVariants} style={{ marginTop: 24, textAlign: "center" }}>

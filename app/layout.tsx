@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { ClientProviders } from "@/components/ClientProviders";
 
 export const metadata: Metadata = {
   title: "Prologue — the visit starts before the visit",
@@ -11,7 +12,11 @@ export const viewport: Viewport = { width: "device-width", initialScale: 1 };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <ClientProviders>
+          {children}
+        </ClientProviders>
+      </body>
     </html>
   );
 }

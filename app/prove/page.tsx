@@ -179,6 +179,7 @@ export default function ProvePage() {
             key={p.key}
             onClick={() => apply(p)}
             className="btn"
+            aria-pressed={active === p.key}
             style={{
               textAlign: "left",
               padding: "12px 14px",
@@ -205,7 +206,7 @@ export default function ProvePage() {
           <h2>Or change a fact yourself</h2>
           <button className="btn" style={{ marginLeft: "auto" }} onClick={reset}>Reset</button>
         </header>
-        <div className="body" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))", gap: 14 }}>
+        <div className="body" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,230px),1fr))", gap: 14 }}>
           <label style={{ display: "grid", gap: 5 }}>
             <span className="mono" style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--ink-3)" }}>Medication on the chart</span>
             <select id="drug" name="drug" value={drug}
@@ -233,7 +234,7 @@ export default function ProvePage() {
       <section className="card" style={{ marginTop: 16, borderColor: result.fired ? "var(--crit)" : "var(--line)" }}>
         <header>
           <h2>What happened</h2>
-          <span className={`chip ${result.fired ? "live" : ""}`} style={{ marginLeft: "auto" }}>
+          <span className={`chip ${result.fired ? "live" : ""}`} style={{ marginLeft: "auto" }} role="status" aria-live="polite">
             {result.fired ? `correlation fired · day ${result.dayOfTherapy}` : "declined to infer"}
           </span>
           <span className="chip" suppressHydrationWarning>
