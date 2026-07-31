@@ -69,6 +69,8 @@ export interface RedFlagRule {
   id: string;
   label: string;
   severity: "high" | "moderate";
+  /** i18n key for the patient-facing message. English text below is the fallback. */
+  patientKey: "escalateGeneric" | "escalateUrgent";
   /** Match on the accumulated transcript, lowercased. */
   patterns: RegExp[];
   clinicMessage: string;
@@ -80,6 +82,7 @@ export const RED_FLAG_RULES: RedFlagRule[] = [
     id: "mucosal-involvement",
     label: "Mucosal involvement with rash",
     severity: "high",
+    patientKey: "escalateGeneric",
     patterns: [
       /\b(mouth|lip|lips|oral|tongue|throat|gum|gums)\b[^.?!]{0,40}\b(sore|hurt|ulcer|blister|raw|pain)/,
       /\b(sore|painful|blistered|ulcerated)\b[^.?!]{0,30}\b(mouth|lips|throat|tongue)\b/,
@@ -95,6 +98,7 @@ export const RED_FLAG_RULES: RedFlagRule[] = [
     id: "blistering-peeling",
     label: "Blistering or skin peeling",
     severity: "high",
+    patientKey: "escalateGeneric",
     patterns: [/\b(blister|blisters|blistering|peeling|sloughing|skin.{0,10}coming off)\b/],
     clinicMessage: "Blistering or desquamation reported. Recommend same-day assessment.",
     patientMessage: "I want a nurse to call you today about this.",
@@ -103,6 +107,7 @@ export const RED_FLAG_RULES: RedFlagRule[] = [
     id: "systemic-symptoms",
     label: "Fever or systemic symptoms with rash",
     severity: "moderate",
+    patientKey: "escalateGeneric",
     patterns: [/\b(fever|feverish|chills|temperature)\b/, /\bswollen\b[^.?!]{0,20}\b(face|lymph|glands)\b/],
     clinicMessage: "Systemic symptoms reported with rash. Consider expedited review.",
     patientMessage: "I'll let the office know so they can decide whether to see you sooner.",
@@ -111,6 +116,7 @@ export const RED_FLAG_RULES: RedFlagRule[] = [
     id: "airway-breathing",
     label: "Breathing difficulty or throat tightness",
     severity: "high",
+    patientKey: "escalateUrgent",
     patterns: [
       /\b(trouble|hard|difficult|difficulty)\b[^.?!]{0,20}\bbreath/,
       /\b(short of breath|throat.{0,15}(closing|tight)|can'?t breathe|wheez)/,
@@ -141,6 +147,7 @@ export function checkRedFlags(transcript: string): Escalation | null {
           severity: rule.severity,
           clinicMessage: rule.clinicMessage,
           patientMessage: rule.patientMessage,
+          patientKey: rule.patientKey,
         };
       }
     }
@@ -151,6 +158,7 @@ export function checkRedFlags(transcript: string): Escalation | null {
       ruleId: "evaluation-error",
       ruleLabel: "Safety check could not complete",
       severity: "moderate",
+      patientKey: "escalateGeneric",
       clinicMessage:
         "The automated safety check failed to evaluate. Escalating by default — please review manually.",
       patientMessage: "I want someone from the office to review this with you today.",

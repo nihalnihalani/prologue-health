@@ -98,12 +98,16 @@ export interface Escalation {
   clinicMessage: string;
   /** What the patient is told — never names a condition. */
   patientMessage: string;
+  /** i18n key so the patient hears this in their own language. */
+  patientKey?: "escalateGeneric" | "escalateUrgent";
   citation?: { label: string; url?: string };
 }
 
 /** The whole shared model. */
 export interface StoryMap {
   sessionId: string;
+  /** The patient's language. Clinical text stays English regardless. */
+  locale: string;
   patient: {
     id: string;
     name: string;
@@ -137,8 +141,13 @@ export interface ToolCall {
   detail?: string;
 }
 
-export const emptyStoryMap = (sessionId: string, patient: StoryMap["patient"]): StoryMap => ({
+export const emptyStoryMap = (
+  sessionId: string,
+  patient: StoryMap["patient"],
+  locale = "en"
+): StoryMap => ({
   sessionId,
+  locale,
   patient,
   consent: {
     granted: false,

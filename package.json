@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@deepgram/sdk": "^5.7.0",
+    "@google/genai": "^2.15.0",
     "@medplum/core": "^5.1.27",
     "next": "16.2.12",
     "react": "19.2.4",

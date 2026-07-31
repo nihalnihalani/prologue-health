@@ -10,6 +10,7 @@
  */
 
 import type { StoryMap, StoryItem, TimelineModel, Benefits, ReconRow, ToolCall } from "@/lib/types";
+import { t, type Locale } from "@/lib/i18n";
 
 export type Audience = "patient" | "clinician";
 
@@ -167,14 +168,24 @@ const SOURCE_LABEL_CLIN: Record<StoryItem["source"], string> = {
   CLINICIAN: "CLINICIAN",
 };
 
+const I18N_SRC: Record<StoryItem["source"], string> = {
+  PATIENT: "srcPatient",
+  RECORD: "srcRecord",
+  INFERRED: "srcInferred",
+  INSURANCE: "srcInsurance",
+  CLINICIAN: "srcPatient",
+};
+
 export function ItemRow({
   item,
   audience,
+  locale = "en",
   onReject,
   onPlay,
 }: {
   item: StoryItem;
   audience: Audience;
+  locale?: Locale;
   onReject?: (id: string) => void;
   onPlay?: (item: StoryItem) => void;
 }) {
@@ -208,7 +219,7 @@ export function ItemRow({
         </div>
         <div className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)", marginTop: 4 }}>
           <span className={`src-${item.source}`}>
-            {audience === "patient" ? SOURCE_LABEL[item.source] : SOURCE_LABEL_CLIN[item.source]}
+            {audience === "patient" ? t(locale, I18N_SRC[item.source]) : SOURCE_LABEL_CLIN[item.source]}
           </span>
           {audience === "clinician" && item.rule && <> · rule: {item.rule}</>}
           {audience === "clinician" && item.severity && <> · severity: {item.severity}</>}
