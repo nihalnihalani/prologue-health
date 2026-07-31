@@ -39,9 +39,11 @@ rather than the reverse.
 
 ## The three minute demo
 
-Open two windows side by side: **`/patient`** on a phone-sized window,
-**`/clinician`** on the desktop. The clinician view polls, so the packet fills in
-live as the call proceeds.
+**Use two devices.** Open **`/patient`** on an actual phone and **`/clinician`** on
+the laptop, both pointed at the same server. The story map is held server-side,
+so the packet fills in on the laptop as the call proceeds on the phone. (Two
+browser windows on one machine works too, but the two-device version is the
+demo that lands.)
 
 | Time | Beat | What to do |
 |---|---|---|
@@ -128,8 +130,17 @@ condition name — asserted against a forbidden-terms regex across every rule.
 ## Known limitations
 
 - **Not HIPAA compliant, and we don't claim to be.** Synthetic data only.
-- The story map is shared between the two views via `localStorage`, so both must
-  run in the same browser. A server-side session store is the obvious next step.
+- The session store is an **in-process Map**. It crosses devices against a single
+  server instance and survives reloads, but not a restart, and not multiple
+  serverless instances. The real answer is to persist the story map into Medplum
+  itself — it is already FHIR-shaped — which is the documented next step rather
+  than something claimed as done. `localStorage` remains a same-browser fallback
+  if the server write fails.
+- **Clinician-facing translation is not implemented.** When a patient speaks
+  Spanish, the clinician sees the original Spanish tagged `original · es-US`,
+  not an English rendering. Showing a machine translation *as* the clinical
+  record without a path back to the source would be worse than showing the
+  source, so the original is what we show.
 - The scripted path advances on a button rather than on real turn-taking.
 - Drug knowledge is three entries, hand-curated. It is a demonstration of the
   mechanism, not a formulary.

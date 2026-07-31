@@ -221,6 +221,17 @@ export function ItemRow({
           <span className={`src-${item.source}`}>
             {audience === "patient" ? t(locale, I18N_SRC[item.source]) : SOURCE_LABEL_CLIN[item.source]}
           </span>
+          {audience === "clinician" && item.lang && !item.lang.startsWith("en") && (
+            <>
+              {" · "}
+              <span
+                className="src-PATIENT"
+                title="Spoken in this language. This is the original, not a translation."
+              >
+                original · {item.lang}
+              </span>
+            </>
+          )}
           {audience === "clinician" && item.rule && <> · rule: {item.rule}</>}
           {audience === "clinician" && item.severity && <> · severity: {item.severity}</>}
           {audience === "clinician" && item.fhir && <> · {item.fhir}</>}

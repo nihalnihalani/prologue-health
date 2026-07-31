@@ -41,6 +41,14 @@ export default function PatientPage() {
 
   const sync = useCallback((m: StoryMap) => {
     setMap({ ...m });
+    // Server store first: the demo is a phone for the patient and a laptop for
+    // the clinician, so localStorage alone cannot carry it. localStorage stays
+    // as a same-browser fallback if the POST fails.
+    void fetch("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(m),
+    }).catch(() => {});
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(m));
     } catch {
