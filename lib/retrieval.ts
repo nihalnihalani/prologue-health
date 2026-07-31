@@ -131,7 +131,7 @@ export class MossRetrievalProvider implements RetrievalProvider {
     return this.client as {
       createIndex(n: string, d: unknown[], o?: unknown): Promise<{ jobId?: string }>;
       loadIndex(n: string, o?: unknown): Promise<string>;
-      query(n: string, q: string, o?: unknown): Promise<{ results?: unknown[] }>;
+      query(n: string, q: string, o?: unknown): Promise<{ docs?: unknown[] }>;
       deleteIndex(n: string): Promise<boolean>;
     };
   }
@@ -185,7 +185,9 @@ export class MossRetrievalProvider implements RetrievalProvider {
     try {
       const c = await this.getClient();
       const res = await c.query(indexName, query, { topK: opts?.topK ?? 5 });
-      const rows = (res?.results ?? []) as {
+      // Moss returns `docs` (SearchResult.docs), not `results`.
+      const rows = (res?.docs ?? []) as {
+        id?: string;
         text?: string;
         score?: number;
         metadata?: Record<string, string>;
