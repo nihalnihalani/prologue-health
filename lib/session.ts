@@ -268,11 +268,14 @@ export class PrologueSession {
     });
 
     for (const r of rows.filter((x) => x.state !== "match")) {
+      // A reconciliation finding is a comparison, not something the patient
+      // said verbatim — so it is not filed under PATIENT.
       this.addItem({
-        source: "PATIENT",
-        text: `${r.drug}: chart says ${r.prescribed ?? "not listed"}; patient reports "${r.reported}"`,
-        patientText: `Your list shows ${r.drug}, and you told me ${r.reported}.`,
-        fhir: "MedicationStatement (draft)",
+        source: "RECORD",
+        text: `${r.drug} — chart lists ${r.prescribed ?? "nothing"}; patient reports "${r.reported}"`,
+        patientText: `Your list shows ${r.drug}, and you told me you ${r.reported}.`,
+        rule: "medication-reconciliation",
+        fhir: "MedicationStatement (draft) vs MedicationRequest (active)",
       });
       this.map.openQuestions.push({
         id: uid("q"),

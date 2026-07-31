@@ -210,7 +210,11 @@ export function buildTimeline(
     days,
     todayDay: drugStartedDaysAgo,
     meds: [
-      ...backgroundDrugs.map((name) => ({
+      // Only drugs that actually amplify the risk earn a track. Everything else
+      // is noise on the one visual that has to make the argument by itself.
+      ...backgroundDrugs
+        .filter((n) => c.amplifiers.some((a) => n.toLowerCase().includes(a.toLowerCase())))
+        .map((name) => ({
         name,
         startDay: -8, // runs off the left edge: started long before this window
         ongoing: true,
