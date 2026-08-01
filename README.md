@@ -324,7 +324,7 @@ This follows Medplum's own documented **["can suggest, but not act"](https://www
 | **0:35–1:25** | **Conversation.** She tells her story uninterrupted. Function panel shows retrieval firing with **a live latency readout**. Then the lamotrigine question. *"Nobody wrote that question — it came from her chart."* |
 | **1:25–1:45** | **Barge-in.** She cuts the agent off. Mucosal involvement. Red flag fires |
 | **1:45–2:10** | **The moment.** Timeline snaps up — lamotrigine bar, weeks 2–8 shaded, rash point *inside* the window, divalproex underneath. Escalation. **No diagnosis named** |
-| **2:10–2:30** | **Eligibility**, causally motivated. Real 270/271. Raw response flashed. Sandbox limit preempted before anyone probes it |
+| **2:10–2:30** | **Reconciliation catch** — chart lists furosemide active, Maria stopped it months ago. `MedicationRequest` vs `MedicationStatement`, flagged not changed. Then **eligibility**: real 270/271, raw response flashed, sandbox limit preempted before anyone probes it |
 | **2:30–2:50** | **Confirm-back** + the **doorknob question**, and she raises something new |
 | **2:50–3:35** | **Clinician review.** Click a citation — **Maria's actual voice plays.** One inference rejected, rest approved. `preliminary → final` on screen |
 | **3:35–4:00** | **Before/after + close** |
@@ -373,6 +373,7 @@ This follows Medplum's own documented **["can suggest, but not act"](https://www
 
 | Doc | Contents |
 |---|---|
+| **[docs/CONCEPT-BRIEF.md](docs/CONCEPT-BRIEF.md)** | **The one-pager** — pitch, personas, magical moment, MVP, non-goals, demo outline, risk |
 | **[docs/00-DECISION-LOG.md](docs/00-DECISION-LOG.md)** | **How we got here** — every idea generated and killed, every reversal, and why. The most useful document here |
 | [docs/01-PRODUCT-DESIGN.md](docs/01-PRODUCT-DESIGN.md) | Full design: 7 concepts, scoring, conversation branches, FHIR mapping, sequence diagram, demo script, 48-hour plan |
 | [docs/research/sponsors.md](docs/research/sponsors.md) | Verified sponsor API capabilities and constraints |

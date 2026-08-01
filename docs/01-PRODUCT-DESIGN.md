@@ -343,6 +343,15 @@ Never probabilistic. A rule list, not a model.
 **H11 — Spoken summary for confirmation (`generate_visit_summary`)**
 > "Let me read back what I have. Rash on both arms and chest, itchy, started about four days ago. Sore mouth since yesterday. Started lamotrigine about three weeks ago, still on divalproex. Anything wrong or missing?"
 
+**H11b — Medication reconciliation (`get_relevant_medications` → `save_confirmed_patient_statement`)**
+> **Prologue:** "Before we finish — let me just confirm your medication list. It shows lamotrigine, divalproex, and furosemide. Are you taking all three?"
+> **Maria:** "The first two, yeah. But I stopped the furosemide months ago — they told me I didn't need it anymore."
+> **Prologue:** "Good to know — I'll flag that so Dr. Osei can update it. **I'm not able to change your list myself.**"
+
+The chart holds a `MedicationRequest` — what was *prescribed*. Her answer becomes a `MedicationStatement` — what is *actually taken*. **FHIR keeps them separate on purpose, and the gap between them is where 91% of harmful discrepancies live.** Most teams will collapse both into one list and lose the discrepancy entirely.
+
+Two boundaries demonstrated in one breath: the agent flags, and says out loud that it cannot change the list itself.
+
 **H12 — Eligibility, causally motivated (`run_eligibility_check`)**
 > "Since we're moving this up, let me check your coverage so it isn't a surprise… Your Aetna plan is active, and this visit is covered under your office-visit benefit. You've met about $660 of your deductible. The office can give you an exact estimate — **I'm not able to promise a final number.**"
 
