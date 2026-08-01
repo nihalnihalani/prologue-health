@@ -33,9 +33,19 @@ export const RASH_STARTED_DAYS_AGO = 4;
 
 export const PATIENT_ID = "maria-delgado-synthetic";
 
+/**
+ * Medplum only assigns server-generated UUIDs; it does not support a
+ * client-chosen resource id ("update as create"). This identifier is the
+ * stable business key scripts/seedMaria.ts and lib/medplum.ts's live patient
+ * lookup use to find the same seeded resources across reruns and process
+ * restarts, since the literal id can never be maria-delgado-synthetic.
+ */
+export const FIXTURE_IDENTIFIER_SYSTEM = "https://prologue.health/fhir/fixture-id";
+
 export const patient = {
   resourceType: "Patient",
   id: PATIENT_ID,
+  identifier: [{ system: FIXTURE_IDENTIFIER_SYSTEM, value: PATIENT_ID }],
   active: true,
   name: [{ use: "official", family: "Delgado", given: ["Maria"] }],
   gender: "female",
@@ -64,6 +74,7 @@ export const medicationRequests = [
   {
     resourceType: "MedicationRequest",
     id: "mr-lamotrigine",
+    identifier: [{ system: FIXTURE_IDENTIFIER_SYSTEM, value: "mr-lamotrigine" }],
     status: "active",
     intent: "order",
     medicationCodeableConcept: {
@@ -78,6 +89,7 @@ export const medicationRequests = [
   {
     resourceType: "MedicationRequest",
     id: "mr-divalproex",
+    identifier: [{ system: FIXTURE_IDENTIFIER_SYSTEM, value: "mr-divalproex" }],
     status: "active",
     intent: "order",
     medicationCodeableConcept: {
@@ -92,6 +104,7 @@ export const medicationRequests = [
   {
     resourceType: "MedicationRequest",
     id: "mr-furosemide",
+    identifier: [{ system: FIXTURE_IDENTIFIER_SYSTEM, value: "mr-furosemide" }],
     status: "active", // ← still active on the chart; the patient stopped it. This is the discrepancy.
     intent: "order",
     medicationCodeableConcept: {
@@ -109,6 +122,7 @@ export const conditions = [
   {
     resourceType: "Condition",
     id: "cond-bipolar2",
+    identifier: [{ system: FIXTURE_IDENTIFIER_SYSTEM, value: "cond-bipolar2" }],
     clinicalStatus: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-clinical", code: "active" }] },
     verificationStatus: {
       coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-ver-status", code: "confirmed" }],
@@ -126,6 +140,7 @@ export const allergies = [
   {
     resourceType: "AllergyIntolerance",
     id: "allergy-nkda",
+    identifier: [{ system: FIXTURE_IDENTIFIER_SYSTEM, value: "allergy-nkda" }],
     clinicalStatus: {
       coding: [{ system: "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical", code: "active" }],
     },
@@ -140,6 +155,7 @@ export const allergies = [
 export const coverage = {
   resourceType: "Coverage",
   id: "coverage-aetna",
+  identifier: [{ system: FIXTURE_IDENTIFIER_SYSTEM, value: "coverage-aetna" }],
   status: "active",
   subscriberId: "W123456789",
   beneficiary: { reference: `Patient/${PATIENT_ID}` },

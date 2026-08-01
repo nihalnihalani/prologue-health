@@ -19,7 +19,7 @@
  */
 
 import type { StoryMap, StoryItem } from "./types";
-import { writeDraft, finalizeComposition, medplumConfigured } from "./medplum";
+import { writeDraft, finalizeComposition, medplumConfigured, resolveLivePatientId } from "./medplum";
 import { assertFixtureAllowed, isPilot } from "./runtime";
 
 /* ------------------------------------------------------------------ */
@@ -172,9 +172,15 @@ export function authorizeClinician(clinicianId: string, secret?: string): Clinic
  * Deliberately absent: `Condition`. Asserting a condition is a clinical act.
  * The agent produces `Observation` (what was observed) and `DetectedIssue`
  * (what warrants attention); only a clinician may create a `Condition`.
+ *
+ * `patientId` defaults to the session's own business key, but the approval
+ * transaction passes Medplum's real, resolved Patient id instead — Medplum
+ * never assigns the business key as a live id, so writing drafts that
+ * reference it verbatim would create resources pointing at a Patient that
+ * does not exist.
  */
-export function projectDrafts(session: IntakeSession): Record<string, unknown>[] {
-  const { map, patientId } = session;
+export function projectDrafts(session: IntakeSession, patientId: string = session.patientId): Record<string, unknown>[] {
+  const { map } = session;
   const subject = { reference: `Patient/${patientId}` };
   const out: Record<string, unknown>[] = [];
 
@@ -186,6 +192,18 @@ export function projectDrafts(session: IntakeSession): Record<string, unknown>[]
       category: [{ coding: [{ system: "http://loinc.org", code: "59284-0", display: "Consent Document" }] }],
       patient: subject,
       dateTime: map.consent.at,
+      // Required to satisfy FHIR's ppc-1 invariant (policy.exists() or
+      // policyRule.exists()). This consent covers the patient's HIPAA notice
+      // of privacy practices acknowledgment for the pre-visit intake.
+      policyRule: {
+        coding: [
+          {
+            system: "http://terminology.hl7.org/CodeSystem/consentpolicy",
+            code: "hipaa-npp",
+            display: "HIPAA Notice of Privacy Practices",
+          },
+        ],
+      },
       provision: { type: "permit", purpose: [{ code: "TREAT" }] },
     });
   }
@@ -278,8 +296,8 @@ export function projectDrafts(session: IntakeSession): Record<string, unknown>[]
 }
 
 /** The narrative Composition. Always created preliminary; finalized separately. */
-export function buildComposition(session: IntakeSession, clinician: Clinician) {
-  const { map, patientId } = session;
+export function buildComposition(session: IntakeSession, clinician: Clinician, patientId: string = session.patientId) {
+  const { map } = session;
   const esc = map.escalation ? `<p><b>Escalated:</b> ${map.escalation.clinicMessage}</p>` : "";
   return {
     resourceType: "Composition",
@@ -448,38 +466,68 @@ export async function approveIntake(
 
   // 5. Persist drafts. writeDraft() refuses final/completed, so this cannot
   //    accidentally finalize anything.
-  const drafts = projectDrafts(session);
-  const composition = buildComposition(session, clinician);
   const writes: WriteReceipt[] = [];
   const now = new Date().toISOString();
   let compositionId: string | undefined;
-  const origin: "live" | "fixture" = medplumConfigured ? "live" : "fixture";
 
   if (!medplumConfigured) {
     assertFixtureAllowed("Medplum", "no credentials configured");
     warnings.push("Medplum is not configured; NOTHING was persisted");
-    for (const r of [...drafts, composition]) {
+    for (const r of [...projectDrafts(session), buildComposition(session, clinician)]) {
       writes.push({ resourceType: String(r.resourceType), status: "not-attempted", origin: "fixture" });
     }
   } else {
-    try {
-      const w = await writeDraft([...drafts, composition]);
+    // Resolve the live Patient id ONCE for the whole transaction — every
+    // draft's subject/patient reference is built from this same value, never
+    // re-resolved per resource.
+    const resolution = await resolveLivePatientId(session.patientId);
+
+    if (!resolution.id) {
+      const reason = resolution.reason ?? "patient could not be resolved to a live Medplum id";
+      // Pilot mode treats an unresolvable patient exactly like any other
+      // integration failure: it surfaces rather than substituting anything.
+      assertFixtureAllowed("Medplum", reason);
+      warnings.push(
+        `Medplum write skipped: ${reason}. A resource referencing an unresolved patient would be a fabricated ` +
+          "link, so nothing was written."
+      );
+      // patientId here is irrelevant — projectDrafts()/buildComposition()'s
+      // default is only used to enumerate resourceTypes for the receipt;
+      // these objects are never sent to Medplum.
+      for (const r of [...projectDrafts(session), buildComposition(session, clinician)]) {
+        writes.push({ resourceType: String(r.resourceType), status: "failed", origin: "fixture", error: reason });
+      }
+    } else {
+      const livePatientId = resolution.id;
+      const drafts = projectDrafts(session, livePatientId);
+      const composition = buildComposition(session, clinician, livePatientId);
+
+      let w;
+      try {
+        w = await writeDraft([...drafts, composition]);
+      } catch (err) {
+        // Nothing has been finalized yet, so failing here is clean.
+        throw new Error(`draft persistence failed before finalization: ${(err as Error).message}`);
+      }
+
+      if (w.simulated) assertFixtureAllowed("Medplum", "draft persistence degraded to a fixture");
+
+      const anyFailed = w.data.results.some((r) => !r.ok);
       if (w.simulated) {
-        assertFixtureAllowed("Medplum", "draft persistence degraded to a fixture");
-        warnings.push("Medplum write degraded; the durable record is NOT live");
-        for (const r of [...drafts, composition]) {
-          writes.push({ resourceType: String(r.resourceType), status: "failed", origin: "fixture", error: w.detail });
-        }
-      } else {
-        for (const id of w.data.ids) {
-          const [type, rid] = id.split("/");
-          writes.push({ resourceType: type, id: rid, status: "written", origin: "live" });
-          if (type === "Composition") compositionId = rid;
+        warnings.push(`Medplum write degraded; the durable record is NOT live: ${w.detail ?? "no client available"}`);
+      } else if (anyFailed) {
+        warnings.push(`Some Medplum writes failed; the durable record is only PARTIALLY live: ${w.detail}`);
+      }
+
+      // Per-resource outcome — one invalid resource must not fail the others.
+      for (const r of w.data.results) {
+        if (r.ok) {
+          writes.push({ resourceType: r.resourceType, id: r.id, status: "written", origin: "live" });
+          if (r.resourceType === "Composition") compositionId = r.id;
+        } else {
+          writes.push({ resourceType: r.resourceType, status: "failed", origin: "fixture", error: r.error });
         }
       }
-    } catch (err) {
-      // Nothing has been finalized yet, so failing here is clean.
-      throw new Error(`draft persistence failed before finalization: ${(err as Error).message}`);
     }
   }
 
@@ -530,30 +578,29 @@ export async function approveIntake(
   };
 
   if (medplumConfigured && finalized) {
-    try {
-      const w = await writeDraft([provenance, auditEvent]);
-      if (w.simulated) throw new Error(w.detail ?? "degraded");
-      for (const id of w.data.ids) {
-        const [type, rid] = id.split("/");
-        writes.push({ resourceType: type, id: rid, status: "written", origin: "live" });
-      }
-    } catch (err) {
-      const msg = (err as Error).message;
-      for (const t of ["Provenance", "AuditEvent"]) {
-        writes.push({ resourceType: t, status: "failed", origin: "live", error: msg });
-      }
+    const w = await writeDraft([provenance, auditEvent]);
+    const anyFailed = w.simulated || w.data.results.some((r) => !r.ok);
+    for (const r of w.data.results) {
+      writes.push(
+        r.ok
+          ? { resourceType: r.resourceType, id: r.id, status: "written", origin: "live" }
+          : { resourceType: r.resourceType, status: "failed", origin: "fixture", error: r.error }
+      );
+    }
+    if (anyFailed) {
       warnings.push(
-        `attestation trail incomplete: ${msg}. The Composition is final but Provenance/AuditEvent ` +
-          `did not persist. Retry is safe — idempotency key ${idempotencyKey(session.id)}.`
+        `attestation trail incomplete: ${w.detail ?? "degraded"}. The Composition is final but Provenance/AuditEvent ` +
+          `did not fully persist. Retry is safe — idempotency key ${idempotencyKey(session.id)}.`
       );
     }
   } else {
     for (const t of ["Provenance", "AuditEvent"]) {
-      writes.push({ resourceType: t, status: "not-attempted", origin });
+      writes.push({ resourceType: t, status: "not-attempted", origin: "fixture" });
     }
   }
 
-  // 8. Commit.
+  // 8. Commit. Origin reflects what actually happened — never credential
+  //    presence alone — so it can only be "live" once something really wrote.
   const attempted = writes.filter((w) => w.status !== "not-attempted");
   const succeeded = writes.filter((w) => w.status === "written");
   const signature: SignatureRecord = {
@@ -565,7 +612,7 @@ export async function approveIntake(
     writes,
     fullyPersisted: attempted.length > 0 && attempted.length === succeeded.length,
     partial: succeeded.length > 0 && succeeded.length < attempted.length,
-    origin,
+    origin: succeeded.length > 0 ? "live" : "fixture",
   };
 
   session.state = "signed";
