@@ -8,7 +8,7 @@
 
 Built for the **YC × Medplum Agentic Healthcare Hackathon** — Aug 1, 2026, Y Combinator SF
 
-`Medplum` (FHIR source of truth) · `Deepgram` (Voice Agent) · `Stedi` (X12 eligibility)
+`Medplum` (FHIR) · `Deepgram` (English voice) · `Gemini Live` (10 languages) · `Stedi` (X12 eligibility)
 
 </div>
 

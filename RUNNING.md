@@ -26,8 +26,8 @@ independent — Stedi alone will make coverage live while the chart stays fixtur
 |---|---|
 | `MEDPLUM_CLIENT_ID` + `MEDPLUM_CLIENT_SECRET` | Chart reads hit a real Medplum project; drafts are written as real FHIR |
 | `STEDI_API_KEY` | Coverage runs a real X12 270/271; the badge flips `FIXTURE` → `LIVE 270/271` |
-| `GEMINI_API_KEY` | **Gemini Live** becomes the voice path — native multilingual audio, barge-in, function calling |
-| `DEEPGRAM_API_KEY` | `/api/deepgram-token` mints short-lived tokens for the Deepgram Voice Agent |
+| `DEEPGRAM_API_KEY` | **Deepgram Voice Agent becomes the English path** — `nova-3-medical` + keyterm prompting over the patient's own drug list |
+| `GEMINI_API_KEY` | **Gemini Live becomes the non-English path** — native audio detects and switches language automatically |
 
 ⚠️ **Stedi test mode constraints** (verified against their docs): 270/271, 837,
 835 and 277CA only — **no 278 prior auth, no 276/277**. Mock payers are limited
@@ -83,16 +83,30 @@ A translated summary is an interpretation. The clinician must be able to reach w
 
 Gemini Live's native-audio models **choose the language themselves and reject an explicit language code**, so language is steered in the system instruction — and the model will follow the patient if they switch mid-call.
 
+## Voice routing — and why
+
+Two providers, chosen per language rather than as a preference:
+
+| Language | Provider | Why |
+|---|---|---|
+| **English** | **Deepgram Voice Agent** — `nova-3-medical` + `keyterms` | The largest live risk in this demo is a drug name transcribing wrong. *Metoprolol* and *metolazone* differ by one phoneme and are unrelated drugs; *lamotrigine* is the word the whole demo turns on. Keyterm prompting over a **closed vocabulary — this patient's own eight medications** — is the strongest mitigation anywhere in the stack. |
+| **Everything else** | **Gemini Live** — `gemini-3.1-flash-live-preview` | Native-audio models detect and switch language automatically and reject an explicit language code. Deepgram would need the language declared up front; Gemini follows the patient if they switch mid-call. |
+
+**The detail worth pointing at on stage:** when a deterministic red-flag rule fires, the app calls Deepgram's `InjectAgentMessage` with `behavior: "interrupt"` — the safety rules cut the model off mid-word rather than *asking* it to comply. Safety logic outranks the model, and it is enforced on the wire.
+
+Deepgram also reports **real latency on the wire** (`LatencyReport`, `AgentStartedSpeaking`), so the turn/STT/TTS figures shown in the header are measured, not estimated.
+
 ## Fallbacks, in order
 
 The app degrades without ever fabricating. Each level removes capability, never truthfulness.
 
-1. **Gemini Live unavailable** (no key, or the token mint 503s) → the capability probe fails and the app drops to the next level automatically. The 503 in the console is that probe working.
-2. **No Gemini** → Web Speech API. A real microphone, no credentials. The 🎤 button is live in Chrome.
-3. **No microphone / noisy room** → the scripted button. Only Maria's *words* are canned; the chart read, correlation, red-flag evaluation and the agent's question are all still computed.
-4. **Medplum unavailable** → synthetic fixture, badged `FIXTURE`.
-5. **Stedi unavailable or erroring** → fixture benefits, badged `FIXTURE`, and the agent says the office will check.
-6. **Everything down** → the timeline visual still makes the clinical argument.
+1. **Deepgram unavailable** (no key, or the token mint 503s) → English falls through to the next level. The 503 in the console is the capability probe working.
+2. **Gemini unavailable** → non-English falls through too.
+3. **Neither** → Web Speech API. A real microphone, no credentials. The 🎤 button is live in Chrome.
+4. **No microphone / noisy room** → the scripted button. Only Maria's *words* are canned; the chart read, correlation, red-flag evaluation and the agent's question are all still computed.
+5. **Medplum unavailable** → synthetic fixture, badged `FIXTURE`.
+6. **Stedi unavailable or erroring** → fixture benefits, badged `FIXTURE`, and the agent says the office will check.
+7. **Everything down** → the timeline visual still makes the clinical argument.
 
 ---
 
