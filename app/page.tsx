@@ -1,66 +1,20 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+import Link from "next/link";
 
 export default function Home() {
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>To get started, edit the page.tsx file.</h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <main style={{ maxWidth: 640, margin: "0 auto", padding: "60px 20px" }}>
+      <h1 style={{ fontSize: 34, letterSpacing: "-.03em", margin: 0 }}>Prologue</h1>
+      <p style={{ fontSize: 18, color: "var(--ink-2)", marginTop: 6 }}>The visit starts before the visit.</p>
+      <p style={{ fontSize: 15.5, color: "var(--ink-2)", maxWidth: 520 }}>
+        A voice intake that has already read your chart, so it catches what you didn&rsquo;t know to mention.
+      </p>
+      <div className="chip sim" style={{ display: "inline-block", margin: "6px 0 22px" }}>
+        Synthetic patient — not real PHI
+      </div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <Link href="/patient" className="btn primary big" style={{ textDecoration: "none" }}>Patient check-in →</Link>
+        <Link href="/clinician" className="btn big" style={{ textDecoration: "none" }}>Clinician review →</Link>
+      </div>
+    </main>
   );
 }
