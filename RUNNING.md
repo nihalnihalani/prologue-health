@@ -26,7 +26,8 @@ independent — Stedi alone will make coverage live while the chart stays fixtur
 |---|---|
 | `MEDPLUM_CLIENT_ID` + `MEDPLUM_CLIENT_SECRET` | Chart reads hit a real Medplum project; drafts are written as real FHIR |
 | `STEDI_API_KEY` | Coverage runs a real X12 270/271; the badge flips `FIXTURE` → `LIVE 270/271` |
-| `DEEPGRAM_API_KEY` | `/api/deepgram-token` mints short-lived tokens for the Voice Agent |
+| `GEMINI_API_KEY` | **Gemini Live** becomes the voice path — native multilingual audio, barge-in, function calling |
+| `DEEPGRAM_API_KEY` | `/api/deepgram-token` mints short-lived tokens for the Deepgram Voice Agent |
 
 ⚠️ **Stedi test mode constraints** (verified against their docs): 270/271, 837,
 835 and 277CA only — **no 278 prior auth, no 276/277**. Mock payers are limited
@@ -66,15 +67,30 @@ Same engine as the check-in. If you only ever demo Maria, you've demoed a record
 
 ---
 
+## Languages
+
+Ten languages, selectable before consent: English, Español, 中文, Tiếng Việt, हिन्दी, العربية (RTL), Tagalog, Português, Русский, Français.
+
+**The rule, and it is the whole design:**
+
+> The **patient** hears and reads their own language.
+> The **clinical record** is always English.
+> The patient's **original words** are preserved verbatim and are one click away from the clinician.
+
+A translated summary is an interpretation. The clinician must be able to reach what was actually said — so the original is never discarded, and the clinician is never shown a translation without a path back to the source.
+
+Gemini Live's native-audio models **choose the language themselves and reject an explicit language code**, so language is steered in the system instruction — and the model will follow the patient if they switch mid-call.
+
 ## Fallbacks, in order
 
 The app degrades without ever fabricating. Each level removes capability, never truthfulness.
 
-1. **Deepgram unavailable** → Web Speech API. A real microphone, no credentials. The 🎤 button is live in Chrome.
-2. **No microphone / noisy room** → the scripted button. Only Maria's *words* are canned; the chart read, correlation, red-flag evaluation and the agent's question are all still computed.
-3. **Medplum unavailable** → synthetic fixture, badged `FIXTURE`.
-4. **Stedi unavailable or erroring** → fixture benefits, badged `FIXTURE`, and the agent says the office will check.
-5. **Everything down** → the timeline visual still makes the clinical argument.
+1. **Gemini Live unavailable** (no key, or the token mint 503s) → the capability probe fails and the app drops to the next level automatically. The 503 in the console is that probe working.
+2. **No Gemini** → Web Speech API. A real microphone, no credentials. The 🎤 button is live in Chrome.
+3. **No microphone / noisy room** → the scripted button. Only Maria's *words* are canned; the chart read, correlation, red-flag evaluation and the agent's question are all still computed.
+4. **Medplum unavailable** → synthetic fixture, badged `FIXTURE`.
+5. **Stedi unavailable or erroring** → fixture benefits, badged `FIXTURE`, and the agent says the office will check.
+6. **Everything down** → the timeline visual still makes the clinical argument.
 
 ---
 
