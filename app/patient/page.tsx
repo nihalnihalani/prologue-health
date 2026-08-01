@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, MicOff, Play, Check, AlertCircle, ChevronRight, Settings } from "lucide-react";
+import { Mic, MicOff, Play, Check, AlertCircle, AlertTriangle, ChevronRight, Settings } from "lucide-react";
 import { PrologueSession } from "@/lib/session";
 import type { StoryMap } from "@/lib/types";
 import type { ChartSlice } from "@/lib/fixtures";
@@ -506,17 +506,37 @@ export default function PatientPage() {
             </div>
 
             <div style={{ display: "flex", gap: 8, padding: 12, borderTop: "1px solid var(--line-soft)", flexWrap: "wrap", background: "var(--surface-2)" }}>
+              {liveState === "error" && (
+                <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 10, padding: 4 }}>
+                  <div style={{ fontSize: 13.5, color: "var(--crit)", background: "var(--crit-bg)", padding: "10px 14px", borderRadius: 4, display: "flex", alignItems: "center", gap: 8, fontWeight: 500 }}>
+                    <AlertTriangle size={16} /> Live voice agent connection failed (WebSocket error)
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+                    <button className="btn primary" style={{ flex: 1, padding: "8px 12px", fontSize: 12 }} onClick={() => { setMode("browser"); setLiveState("idle"); }}>
+                      🎤 Use Browser Mic fallback
+                    </button>
+                    <button className="btn" style={{ flex: 1, padding: "8px 12px", fontSize: 12 }} onClick={() => { setMode("scripted"); setLiveState("idle"); }}>
+                      ▶️ Use Scripted Demo fallback
+                    </button>
+                  </div>
+                </div>
+              )}
+              {liveState === "connecting" && (
+                <span className="chip live" style={{ flex: 1, textAlign: "center", padding: "12px", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 13, background: "var(--provenance-inference-bg)", borderColor: "var(--provenance-inference-fg)", color: "var(--provenance-inference-fg)" }}>
+                  <motion.span animate={{ opacity: [1, 0.4, 1] }} transition={{ repeat: Infinity, duration: 1.2 }}>🔄</motion.span> Connecting to live voice agent...
+                </span>
+              )}
               {(mode === "deepgram" || mode === "gemini") && liveState === "live" && (
                 <span className="chip live" style={{ flex: 1, textAlign: "center", padding: "12px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 13 }}>
                   <Mic size={14} /> Listening — just speak
                 </span>
               )}
-              {mode === "browser" && (
+              {mode === "browser" && liveState !== "error" && (
                 <button className={`btn ${micLive ? "danger" : "primary"} big`} onClick={toggleMic} disabled={busy} style={{ flex: 1 }}>
                   {micLive ? <><MicOff size={16}/> {t(locale, "stopButton")}</> : <><Mic size={16}/> {t(locale, "speakButton")}</>}
                 </button>
               )}
-              {mode === "scripted" && (
+              {mode === "scripted" && liveState !== "error" && (
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, alignItems: "center", justifyContent: "center", padding: "6px 0" }}>
                   <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
                     Scripted Session · expand diagnostics disclosure below to play
