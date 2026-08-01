@@ -200,6 +200,23 @@ export function chartSlice(): ChartSlice {
   };
 }
 
+/**
+ * A chart slice containing NO synthetic clinical data.
+ *
+ * Used on the live path so that a genuinely empty chart is reported as empty
+ * rather than backfilled from the demo patient.
+ */
+export function emptyChartSlice(patientId: string): ChartSlice {
+  return {
+    patient: { ...patient, id: patientId } as ChartSlice["patient"],
+    appointment,
+    medications: [],
+    conditions: [],
+    allergies: [],
+    coverage,
+  };
+}
+
 /** Keyterms fed to Deepgram so drug names transcribe correctly. Closed vocabulary. */
 export function keyterms(): string[] {
   return [

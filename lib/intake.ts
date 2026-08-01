@@ -87,6 +87,7 @@ export interface SignatureRecord {
   by: string;
   at: string;
   approvedItemIds: string[];
+  editedItemIds: string[];
   rejectedItemIds: string[];
   compositionId: string;
   provenanceId: string;
@@ -184,7 +185,7 @@ export function projectDrafts(session: IntakeSession): Record<string, unknown>[]
       })),
   });
 
-  for (const i of map.items.filter((x) => x.source === "PATIENT")) {
+  for (const i of map.items.filter((x) => x.source === "PATIENT" && x.status !== "rejected")) {
     out.push({
       resourceType: "Observation",
       status: "preliminary",
@@ -197,7 +198,16 @@ export function projectDrafts(session: IntakeSession): Record<string, unknown>[]
     });
   }
 
-  for (const i of map.items.filter((x) => x.source === "INFERRED")) {
+  /**
+   * Only APPROVED inferences become DetectedIssue.
+   *
+   * This previously projected every inference regardless of status, so an item
+   * the clinician explicitly rejected still created a clinical resource. The
+   * rejection remained visible in the UI while the chart disagreed with it.
+   * A rejected finding stays auditable in the StoryMap and the AuditEvent; it
+   * does not become a clinical resource.
+   */
+  for (const i of map.items.filter((x) => x.source === "INFERRED" && x.status === "approved")) {
     out.push({
       resourceType: "DetectedIssue",
       status: "preliminary",
@@ -277,12 +287,49 @@ export function buildComposition(session: IntakeSession, clinician: Clinician) {
 /* The approval transaction                                            */
 /* ------------------------------------------------------------------ */
 
+export type Decision = "approve" | "edit" | "reject";
+
+export interface ItemDecision {
+  itemId: string;
+  decision: Decision;
+  /** Required for "edit": the clinician's corrected text, which is what promotes. */
+  editedText?: string;
+}
+
 export interface ApprovalRequest {
   sessionId: string;
   clinicianId: string;
   clinicianSecret?: string;
-  /** Item ids the clinician rejected. Everything else in the canonical set is accepted. */
-  rejectedItemIds: string[];
+  /**
+   * An EXPLICIT decision for every promotable item.
+   *
+   * Silence is no longer consent. Previously anything not rejected was
+   * auto-approved, which meant an unread packet promoted every inference in it.
+   */
+  decisions: ItemDecision[];
+}
+
+export class IncompleteReviewError extends Error {
+  readonly undecided: string[];
+  constructor(undecided: string[]) {
+    super(
+      `every promotable item needs an explicit approve/edit/reject decision; ` +
+        `${undecided.length} undecided: ${undecided.join(", ")}`
+    );
+    this.name = "IncompleteReviewError";
+    this.undecided = undecided;
+  }
+}
+
+/**
+ * Items a clinician must rule on.
+ *
+ * Generated content is promotable. A verbatim patient statement is not a
+ * clinical assertion by the system, so it is recorded but does not require a
+ * per-item ruling.
+ */
+export function promotableItems(map: StoryMap): StoryItem[] {
+  return map.items.filter((i) => i.source === "INFERRED");
 }
 
 export interface ApprovalResult {
@@ -338,15 +385,46 @@ export async function approveIntake(
 
   // 4. Validate decisions against the CANONICAL item set.
   const canonical = new Set(session.map.items.map((i) => i.id));
-  const unknown = req.rejectedItemIds.filter((id) => !canonical.has(id));
+  const unknown = req.decisions.map((d) => d.itemId).filter((id) => !canonical.has(id));
   if (unknown.length) throw new UnknownItemsError(unknown);
 
-  const rejected = new Set(req.rejectedItemIds);
+  // Every promotable item needs an explicit ruling. Silence is not consent.
+  const byId = new Map(req.decisions.map((d) => [d.itemId, d]));
+  const undecided = promotableItems(session.map)
+    .filter((i) => !byId.has(i.id))
+    .map((i) => i.id);
+  if (undecided.length) throw new IncompleteReviewError(undecided);
+
   const approvedItemIds: string[] = [];
+  const editedItemIds: string[] = [];
+  const rejectedItemIds: string[] = [];
+
   for (const item of session.map.items) {
-    const next: StoryItem["status"] = rejected.has(item.id) ? "rejected" : "approved";
-    item.status = next;
-    if (next === "approved") approvedItemIds.push(item.id);
+    const d = byId.get(item.id);
+    if (!d) {
+      // Not promotable (a verbatim patient statement). Recorded, not asserted.
+      item.status = "approved";
+      continue;
+    }
+    if (d.decision === "reject") {
+      item.status = "rejected";
+      rejectedItemIds.push(item.id);
+    } else if (d.decision === "edit") {
+      if (!d.editedText?.trim()) {
+        throw new IncompleteReviewError([`${item.id} (edit requires editedText)`]);
+      }
+      // The clinician's wording is what promotes; the original is preserved for
+      // audit on the item itself.
+      item.originalText = item.text;
+      item.text = d.editedText.trim();
+      item.editedBy = clinician.name;
+      item.status = "approved";
+      editedItemIds.push(item.id);
+      approvedItemIds.push(item.id);
+    } else {
+      item.status = "approved";
+      approvedItemIds.push(item.id);
+    }
   }
 
   // 5. Persist drafts. writeDraft() refuses final/completed, so this cannot
@@ -407,7 +485,7 @@ export async function approveIntake(
     agent: [{ who: { display: clinician.name }, requestor: true }],
     source: { observer: { display: "Prologue" } },
     entity: [
-      { what: { reference: compositionId }, detail: [{ type: "approvedItems", valueString: String(approvedItemIds.length) }, { type: "rejectedItems", valueString: String(req.rejectedItemIds.length) }] },
+      { what: { reference: compositionId }, detail: [{ type: "approvedItems", valueString: String(approvedItemIds.length) }, { type: "editedItems", valueString: String(editedItemIds.length) }, { type: "rejectedItems", valueString: String(rejectedItemIds.length) }] },
     ],
   };
 
@@ -424,7 +502,8 @@ export async function approveIntake(
     by: clinician.name,
     at: now,
     approvedItemIds,
-    rejectedItemIds: req.rejectedItemIds,
+    editedItemIds,
+    rejectedItemIds,
     compositionId,
     provenanceId,
     auditEventId,

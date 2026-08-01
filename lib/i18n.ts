@@ -62,7 +62,6 @@ const STRINGS: Record<Locale, Record<string, string>> = {
     askOnsetPrecision: "Take your best guess — closer to two days or closer to a week?",
     escalateGeneric: "I'd like someone from the office to call you today rather than waiting for your appointment.",
     escalateUrgent: "That needs attention right now. Please call 911 or go to an emergency room.",
-    holdDose: "Please don't take another dose until you've spoken with them.",
     reconIntro: "Before we finish — let me confirm your medication list. It shows {drugs}. Are you taking all of them?",
     reconAck: "Good to know — I'll flag that so your doctor can update it. I'm not able to change your list myself.",
     doorknob: "Last thing — is there anything else you were hoping to bring up? Even if it seems small.",
@@ -104,7 +103,6 @@ const STRINGS: Record<Locale, Record<string, string>> = {
     askOnsetPrecision: "Deme su mejor estimación — ¿más cerca de dos días o de una semana?",
     escalateGeneric: "Quiero que alguien de la oficina le llame hoy en lugar de esperar a su cita.",
     escalateUrgent: "Eso necesita atención ahora mismo. Por favor llame al 911 o vaya a una sala de emergencias.",
-    holdDose: "Por favor no tome otra dosis hasta que hable con ellos.",
     reconIntro:
       "Antes de terminar, déjeme confirmar su lista de medicamentos. Muestra {drugs}. ¿Está tomando todos?",
     reconAck:
@@ -150,7 +148,6 @@ const STRINGS: Record<Locale, Record<string, string>> = {
     askOnsetPrecision: "请您估计一下 — 更接近两天还是一周？",
     escalateGeneric: "我希望诊所今天就给您打电话，而不是等到预约那天。",
     escalateUrgent: "这需要立即处理。请拨打 911 或前往急诊室。",
-    holdDose: "在与他们通话之前，请不要再服用下一剂。",
     reconIntro: "在结束之前，让我确认一下您的用药清单。上面有 {drugs}。这些您都在服用吗？",
     reconAck: "知道了 — 我会标记出来让您的医生更新。我本人无法修改您的用药清单。",
     doorknob: "最后一件事 — 您还有什么想跟医生提起的吗？即使看起来是小事。",
@@ -192,7 +189,6 @@ const STRINGS: Record<Locale, Record<string, string>> = {
     askOnsetPrecision: "Hãy ước tính — gần hai ngày hay gần một tuần?",
     escalateGeneric: "Tôi muốn ai đó từ phòng khám gọi cho bạn hôm nay thay vì đợi đến lịch hẹn.",
     escalateUrgent: "Điều đó cần được chú ý ngay. Vui lòng gọi 911 hoặc đến phòng cấp cứu.",
-    holdDose: "Vui lòng không uống liều tiếp theo cho đến khi bạn nói chuyện với họ.",
     reconIntro:
       "Trước khi kết thúc — hãy để tôi xác nhận danh sách thuốc của bạn. Nó cho thấy {drugs}. Bạn có đang dùng tất cả không?",
     reconAck:
@@ -237,7 +233,6 @@ const STRINGS: Record<Locale, Record<string, string>> = {
     askOnsetPrecision: "अंदाज़ा लगाइए — दो दिन के करीब या एक हफ़्ते के करीब?",
     escalateGeneric: "मैं चाहता हूँ कि क्लिनिक से कोई आज ही आपको फ़ोन करे, अपॉइंटमेंट का इंतज़ार न करें।",
     escalateUrgent: "इस पर अभी ध्यान देने की ज़रूरत है। कृपया 911 पर कॉल करें या आपातकालीन कक्ष जाएँ।",
-    holdDose: "उनसे बात करने तक कृपया अगली खुराक न लें।",
     reconIntro:
       "समाप्त करने से पहले — मैं आपकी दवाओं की सूची पक्की कर लूँ। इसमें {drugs} है। क्या आप ये सब ले रहे हैं?",
     reconAck:
@@ -282,7 +277,6 @@ const STRINGS: Record<Locale, Record<string, string>> = {
     askOnsetPrecision: "خمّن تقريبًا — أقرب إلى يومين أم إلى أسبوع؟",
     escalateGeneric: "أريد أن يتصل بك أحد من العيادة اليوم بدلًا من انتظار موعدك.",
     escalateUrgent: "هذا يحتاج إلى اهتمام فوري. من فضلك اتصل بالرقم 911 أو توجه إلى الطوارئ.",
-    holdDose: "من فضلك لا تأخذ الجرعة التالية حتى تتحدث معهم.",
     reconIntro: "قبل أن ننهي — دعني أؤكد قائمة أدويتك. تُظهر {drugs}. هل تتناولها جميعًا؟",
     reconAck: "من الجيد معرفة ذلك — سأشير إليه ليقوم طبيبك بتحديثه. لا يمكنني تغيير القائمة بنفسي.",
     doorknob: "أمر أخير — هل هناك شيء آخر كنت تود ذكره للطبيب؟ حتى لو بدا بسيطًا.",
@@ -324,7 +318,6 @@ const STRINGS: Record<Locale, Record<string, string>> = {
     askOnsetPrecision: "Tantiyahin ninyo — mas malapit sa dalawang araw o sa isang linggo?",
     escalateGeneric: "Gusto kong may tumawag sa inyo mula sa klinika ngayong araw, hindi na hintayin ang appointment.",
     escalateUrgent: "Kailangan ito ng agarang atensyon. Tumawag po sa 911 o pumunta sa emergency room.",
-    holdDose: "Huwag po munang uminom ng susunod na dose hangga't hindi kayo nakakausap nila.",
     reconIntro:
       "Bago tayo matapos — kumpirmahin natin ang listahan ng inyong gamot. Nakalista ang {drugs}. Iniinom ninyo po ba lahat?",
     reconAck:
@@ -369,7 +362,6 @@ const STRINGS: Record<Locale, Record<string, string>> = {
     askOnsetPrecision: "Dê o seu melhor palpite — mais perto de dois dias ou de uma semana?",
     escalateGeneric: "Quero que alguém da clínica ligue para você hoje, em vez de esperar a consulta.",
     escalateUrgent: "Isso precisa de atenção agora. Ligue para o 911 ou vá a um pronto-socorro.",
-    holdDose: "Por favor, não tome a próxima dose até falar com eles.",
     reconIntro:
       "Antes de terminarmos — deixe-me confirmar sua lista de medicamentos. Mostra {drugs}. Você está tomando todos?",
     reconAck:
@@ -414,7 +406,6 @@ const STRINGS: Record<Locale, Record<string, string>> = {
     askOnsetPrecision: "Прикиньте — ближе к двум дням или к неделе?",
     escalateGeneric: "Я хочу, чтобы вам позвонили из клиники сегодня, а не ждать приёма.",
     escalateUrgent: "Это требует внимания прямо сейчас. Позвоните 911 или обратитесь в скорую помощь.",
-    holdDose: "Пожалуйста, не принимайте следующую дозу, пока не поговорите с ними.",
     reconIntro:
       "Прежде чем закончить — давайте подтвердим список лекарств. В нём указано {drugs}. Вы принимаете всё это?",
     reconAck:
@@ -459,7 +450,6 @@ const STRINGS: Record<Locale, Record<string, string>> = {
     askOnsetPrecision: "À votre avis — plutôt deux jours ou plutôt une semaine ?",
     escalateGeneric: "Je souhaite que quelqu'un du cabinet vous appelle aujourd'hui plutôt que d'attendre le rendez-vous.",
     escalateUrgent: "Cela nécessite une attention immédiate. Appelez le 911 ou rendez-vous aux urgences.",
-    holdDose: "Ne prenez pas la dose suivante avant de leur avoir parlé.",
     reconIntro:
       "Avant de terminer — confirmons votre liste de médicaments. Elle indique {drugs}. Les prenez-vous tous ?",
     reconAck:

@@ -40,6 +40,9 @@ export interface StoryItem {
   fhir?: string;
   status: ItemStatus;
   severity?: "high" | "moderate" | "low";
+  /** Set when a clinician edited this item; the pre-edit text, kept for audit. */
+  originalText?: string;
+  editedBy?: string;
 }
 
 /** Something asked but not answered, or answered inconsistently. */
@@ -61,6 +64,11 @@ export interface Benefits {
   deductibleRemaining?: number;
   /** True when served from a fixture rather than a live Stedi call. */
   simulated: boolean;
+  /**
+   * Fields the payer did not return. These are rendered as "not returned by your
+   * plan", never backfilled — a missing benefit is not a zero benefit.
+   */
+  missingFields?: string[];
   raw?: unknown;
 }
 
@@ -102,6 +110,13 @@ export interface Escalation {
   patientMessage: string;
   /** i18n key so the patient hears this in their own language. */
   patientKey?: "escalateGeneric" | "escalateUrgent";
+  /**
+   * True when this escalation exists because the safety rules could not evaluate
+   * the transcript (e.g. an unsupported language), NOT because a rule matched.
+   * The clinician must be able to tell "we found something" from "we could not
+   * look".
+   */
+  coverageGap?: boolean;
   citation?: { label: string; url?: string };
 }
 
@@ -123,6 +138,12 @@ export interface StoryMap {
   reconciliation: ReconRow[];
   timeline?: TimelineModel;
   escalation?: Escalation;
+  /**
+   * Whether the deterministic rules were able to screen this transcript at all.
+   * `covered: false` means "not evaluated", which is different from "nothing
+   * found" and must be shown to the clinician as such.
+   */
+  safetyCoverage?: { covered: boolean; locale: string; note?: string };
   benefits?: Benefits;
   /** preliminary until a clinician signs; then final. Only the approval handler may set final. */
   compositionStatus: "preliminary" | "final";

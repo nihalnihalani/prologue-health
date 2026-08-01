@@ -125,6 +125,8 @@ Every screen says which. Nothing is implied.
 | Patient history | Synthetic fixture (live with Medplum keys) |
 | Coverage | Fixture (live 270/271 with a Stedi key) |
 | Maria's spoken lines in scripted mode | Canned — and labeled as such |
+| Deterministic safety coverage | **English only.** Other locales are flagged unscreened |
+| Patient audio | **Never recorded.** The clinician view synthesises speech from the transcript |
 
 ---
 
@@ -147,8 +149,37 @@ Day-of-therapy is calendar-based, so a clinical interval cannot shift with
   the time of day
 ```
 
+Added by the trust audit (`tests/adversarial.test.ts`):
+
+```
+Rejected findings never become DetectedIssue or any clinical resource; they
+  stay auditable in the StoryMap and the AuditEvent
+Every promotable item needs an EXPLICIT approve / edit / reject; an unread or
+  partially reviewed packet is refused (422) rather than promoting itself
+An edit promotes the CLINICIAN's wording; the pre-edit text is preserved
+Negated and historical symptoms do not escalate ("not sore", "denies",
+  "last year") while a real report in a mixed sentence still does
+Safety rules are validated for ENGLISH ONLY. A non-English intake records a
+  visible coverage gap for the clinician — "not screened" is not "nothing found"
+An empty live chart is reported as EMPTY, never backfilled from the fixture
+A live 271 missing benefits declares them missing, never backfilled with
+  fixture money
+No shipped string in any locale gives medication advice
+The pilot secret is never referenced from client code
+```
+
 Also covered behaviourally: no red-flag `patientMessage` may contain a condition
 name, asserted against a forbidden-terms regex across every rule and locale.
+
+## Known claim boundaries
+
+- **Safety rules are English-only.** Ten UI languages does not mean ten languages
+  of safety coverage. A non-English intake is flagged as unscreened rather than
+  passing silently. Adding a language to the UI does **not** add safety coverage;
+  only writing and testing rules does.
+- **No audio is recorded or stored.** The clinician "read aloud" control uses the
+  browser speech synthesiser on the stored transcript. It previously said "hear
+  what the patient said", which implied a recording that does not exist.
 
 ## Known limitations
 

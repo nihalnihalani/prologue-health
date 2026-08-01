@@ -63,13 +63,21 @@ test("SAFETY: the clinical record stays English whatever the patient speaks", ()
     s.attachChart(chartSlice(), 1, true);
     s.patientSaid("rash, about 4 days", 60);
 
-    const inferred = s.map.items.find((i) => i.source === "INFERRED");
-    assert.ok(inferred, `${locale}: expected an inference`);
+    // Target the correlation inference specifically: a non-English session also
+    // carries a safety-coverage item, which is itself clinician-facing English.
+    const inferred = s.map.items.find((i) => i.rule?.startsWith("temporal-correlation"));
+    assert.ok(inferred, `${locale}: expected a correlation inference`);
     assert.match(
       inferred!.text,
       /Symptom onset falls on day/,
       `${locale}: clinician-facing text must remain English`
     );
+
+    // And the coverage gap must be recorded for every non-English intake.
+    assert.equal(s.map.safetyCoverage?.covered, false, `${locale}: coverage gap must be recorded`);
+    const gap = s.map.items.find((i) => i.rule === "safety-coverage-unavailable")!;
+    assert.ok(gap, `${locale}: coverage gap must be a visible item`);
+    assert.equal(gap.patientText, undefined, "the coverage gap is for the clinician, not the patient");
   }
 });
 

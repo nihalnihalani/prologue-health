@@ -12,6 +12,8 @@ import assert from "node:assert/strict";
 
 import {
   approveIntake,
+  promotableItems,
+  IncompleteReviewError,
   authorizeClinician,
   canTransition,
   projectDrafts,
@@ -35,6 +37,10 @@ function seed(id = "s1", opts: { escalate?: boolean } = {}): IntakeSession {
   if (opts.escalate) s.patientSaid("my mouth is sore too", 90);
   return upsertFromMap(s.map, { patientId: "maria-delgado-synthetic" });
 }
+
+/** Explicit approve for every promotable item — silence is not consent. */
+const approveAll = (s: IntakeSession) =>
+  promotableItems(s.map).map((i) => ({ itemId: i.id, decision: "approve" as const }));
 
 beforeEach(() => __clear());
 afterEach(() => {
@@ -97,7 +103,7 @@ test("GOLDEN: approval finalizes server-side and records a signature", async () 
   const r = await approveIntake(session, {
     sessionId: "golden",
     clinicianId: "practitioner-osei",
-    rejectedItemIds: [],
+    decisions: approveAll(session),
   });
 
   assert.equal(r.state, "signed");
@@ -131,7 +137,7 @@ test("SAFETY: a client-supplied final status is ignored", async () => {
   const r = await approveIntake(session, {
     sessionId: "liar",
     clinicianId: "practitioner-osei",
-    rejectedItemIds: [],
+    decisions: approveAll(session),
   });
   assert.equal(r.signature.by, "Dr. Amara Osei", "attester comes from the roster, not the client");
 });
@@ -143,7 +149,7 @@ test("SAFETY: writes to a signed session are ignored, not applied", () => {
     by: "Dr. Amara Osei", at: new Date().toISOString(),
     approvedItemIds: [], rejectedItemIds: [],
     compositionId: "c", provenanceId: "p", auditEventId: "a",
-    persisted: false, origin: "fixture",
+    persisted: false, editedItemIds: [], origin: "fixture",
   };
 
   const tampered = structuredClone(session.map);
@@ -159,10 +165,10 @@ test("IDEMPOTENT: replaying approval returns the original signature", async () =
   transition("idem", "under_review");
 
   const first = await approveIntake(session, {
-    sessionId: "idem", clinicianId: "practitioner-osei", rejectedItemIds: [],
+    sessionId: "idem", clinicianId: "practitioner-osei", decisions: approveAll(session),
   });
   const second = await approveIntake(session, {
-    sessionId: "idem", clinicianId: "practitioner-osei", rejectedItemIds: [],
+    sessionId: "idem", clinicianId: "practitioner-osei", decisions: approveAll(session),
   });
 
   assert.equal(second.idempotentReplay, true);
@@ -176,7 +182,7 @@ test("rejected ids must exist in the canonical item set", async () => {
     () => approveIntake(session, {
       sessionId: "unknown-items",
       clinicianId: "practitioner-osei",
-      rejectedItemIds: ["item-that-does-not-exist"],
+      decisions: [{ itemId: "item-that-does-not-exist", decision: "reject" }],
     }),
     UnknownItemsError
   );
@@ -188,7 +194,10 @@ test("rejected items are persisted as rejected, not silently approved", async ()
   const inferred = session.map.items.find((i) => i.source === "INFERRED")!;
 
   const r = await approveIntake(session, {
-    sessionId: "rej", clinicianId: "practitioner-osei", rejectedItemIds: [inferred.id],
+    sessionId: "rej", clinicianId: "practitioner-osei",
+    decisions: promotableItems(session.map).map((i) => ({
+      itemId: i.id, decision: i.id === inferred.id ? ("reject" as const) : ("approve" as const),
+    })),
   });
 
   assert.deepEqual(r.signature.rejectedItemIds, [inferred.id]);
@@ -207,11 +216,13 @@ test("SAFETY: drafts never include a Condition", () => {
   assert.ok(!drafts.some((d) => d.resourceType === "Condition"), "the agent may not assert a Condition");
 });
 
-test("drafts cover the expected resource types", () => {
+test("drafts cover the expected resource types once approved", () => {
   const session = seed("cover", { escalate: true });
   session.map.reconciliation = [
     { drug: "furosemide", prescribed: "furosemide 20mg", reported: "stopped taking it", state: "discrepancy" },
   ];
+  // Only APPROVED inferences promote, so approve them first.
+  for (const i of session.map.items) i.status = "approved";
   const kinds = new Set(projectDrafts(session).map((d) => d.resourceType));
   for (const k of ["Consent", "QuestionnaireResponse", "Observation", "DetectedIssue", "MedicationStatement", "Task"]) {
     assert.ok(kinds.has(k), `missing draft resource: ${k}`);
@@ -220,6 +231,7 @@ test("drafts cover the expected resource types", () => {
 
 test("SAFETY: every projected draft survives writeDraft's final-status guard", async () => {
   const session = seed("guard", { escalate: true });
+  for (const i of session.map.items) i.status = "approved";
   const drafts = [...projectDrafts(session), buildComposition(session, { id: "x", name: "Dr. X" })];
   const r = await writeDraft(drafts);
   assert.equal(r.data.written, drafts.length);
@@ -258,7 +270,7 @@ test("SAFETY: pilot approval surfaces the integration failure instead of claimin
       sessionId: "pilot-fail",
       clinicianId: "practitioner-osei",
       clinicianSecret: "s3cret",
-      rejectedItemIds: [],
+      decisions: approveAll(session),
     }),
     IntegrationUnavailableError,
     "with no Medplum credentials, pilot mode must fail rather than sign against a fixture"
@@ -270,7 +282,7 @@ test("demo mode signs but labels the record as a fixture", async () => {
   const session = seed("demo-ok", { escalate: true });
   transition("demo-ok", "under_review");
   const r = await approveIntake(session, {
-    sessionId: "demo-ok", clinicianId: "practitioner-osei", rejectedItemIds: [],
+    sessionId: "demo-ok", clinicianId: "practitioner-osei", decisions: approveAll(session),
   });
   assert.equal(r.signature.origin, "fixture");
   assert.equal(r.signature.persisted, false);
@@ -305,4 +317,127 @@ test("SAFETY: day-of-therapy is calendar-based and clock-stable", () => {
     22,
     "the same calendar day must not yield a different day-of-therapy"
   );
+});
+
+/* ================================================================== */
+/* Adversarial: the failure modes that cost trust                     */
+/* ================================================================== */
+
+test("ADVERSARIAL: a rejected finding never becomes a clinical resource", async () => {
+  const session = seed("no-promote", { escalate: true });
+  transition("no-promote", "under_review");
+  const inferences = promotableItems(session.map);
+  assert.ok(inferences.length >= 2, "need at least two inferences to distinguish");
+
+  const doomed = inferences[0];
+  await approveIntake(session, {
+    sessionId: "no-promote",
+    clinicianId: "practitioner-osei",
+    decisions: inferences.map((i) => ({
+      itemId: i.id,
+      decision: i.id === doomed.id ? ("reject" as const) : ("approve" as const),
+    })),
+  });
+
+  const drafts = projectDrafts(session);
+  const issues = drafts.filter((d) => d.resourceType === "DetectedIssue");
+  assert.ok(
+    !issues.some((d) => String(d.detail) === doomed.text),
+    "a rejected finding must not appear as a DetectedIssue"
+  );
+  // ...but it must remain auditable.
+  assert.equal(session.map.items.find((i) => i.id === doomed.id)!.status, "rejected");
+  assert.ok(session.signature!.rejectedItemIds.includes(doomed.id));
+});
+
+test("ADVERSARIAL: an unread packet cannot promote itself", async () => {
+  const session = seed("unread", { escalate: true });
+  transition("unread", "under_review");
+  await assert.rejects(
+    () => approveIntake(session, {
+      sessionId: "unread", clinicianId: "practitioner-osei", decisions: [],
+    }),
+    IncompleteReviewError,
+    "silence must not count as approval"
+  );
+  assert.notEqual(session.state, "signed");
+});
+
+test("ADVERSARIAL: a partial review is refused, naming what is undecided", async () => {
+  const session = seed("partial", { escalate: true });
+  transition("partial", "under_review");
+  const items = promotableItems(session.map);
+  try {
+    await approveIntake(session, {
+      sessionId: "partial",
+      clinicianId: "practitioner-osei",
+      decisions: [{ itemId: items[0].id, decision: "approve" }],
+    });
+    assert.fail("should have refused");
+  } catch (err) {
+    assert.ok(err instanceof IncompleteReviewError);
+    assert.ok((err as IncompleteReviewError).undecided.length > 0);
+  }
+});
+
+test("ADVERSARIAL: an edit promotes the clinician's wording and preserves the original", async () => {
+  const session = seed("edited", { escalate: true });
+  transition("edited", "under_review");
+  const items = promotableItems(session.map);
+  const target = items[0];
+  const before = target.text;
+
+  const r = await approveIntake(session, {
+    sessionId: "edited",
+    clinicianId: "practitioner-osei",
+    decisions: items.map((i) => ({
+      itemId: i.id,
+      decision: i.id === target.id ? ("edit" as const) : ("approve" as const),
+      editedText: i.id === target.id ? "Clinician-corrected finding" : undefined,
+    })),
+  });
+
+  const after = session.map.items.find((i) => i.id === target.id)!;
+  assert.equal(after.text, "Clinician-corrected finding");
+  assert.equal(after.originalText, before, "the pre-edit text must survive for audit");
+  assert.equal(after.editedBy, "Dr. Amara Osei");
+  assert.ok(r.signature.editedItemIds.includes(target.id));
+
+  const issue = projectDrafts(session).find((d) => d.resourceType === "DetectedIssue")!;
+  assert.equal(issue.detail, "Clinician-corrected finding", "the edit is what promotes");
+});
+
+test("ADVERSARIAL: an edit without text is refused", async () => {
+  const session = seed("blank-edit", { escalate: true });
+  transition("blank-edit", "under_review");
+  const items = promotableItems(session.map);
+  await assert.rejects(
+    () => approveIntake(session, {
+      sessionId: "blank-edit",
+      clinicianId: "practitioner-osei",
+      decisions: items.map((i, n) => ({
+        itemId: i.id, decision: n === 0 ? ("edit" as const) : ("approve" as const), editedText: n === 0 ? "   " : undefined,
+      })),
+    }),
+    IncompleteReviewError
+  );
+});
+
+test("ADVERSARIAL: stale review state — a signed session refuses a second decision set", async () => {
+  const session = seed("stale", { escalate: true });
+  transition("stale", "under_review");
+  const items = promotableItems(session.map);
+  await approveIntake(session, {
+    sessionId: "stale", clinicianId: "practitioner-osei",
+    decisions: items.map((i) => ({ itemId: i.id, decision: "approve" as const })),
+  });
+
+  // A second clinician, working from a stale screen, tries to reject everything.
+  const replay = await approveIntake(session, {
+    sessionId: "stale", clinicianId: "practitioner-chen",
+    decisions: items.map((i) => ({ itemId: i.id, decision: "reject" as const })),
+  });
+  assert.equal(replay.idempotentReplay, true);
+  assert.equal(replay.signature.by, "Dr. Amara Osei", "the original attester stands");
+  assert.equal(replay.signature.rejectedItemIds.length, 0, "the stale rejections must not apply");
 });

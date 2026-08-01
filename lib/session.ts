@@ -18,7 +18,7 @@ import {
   type ToolCall,
   type ReconRow,
 } from "./types";
-import { checkRedFlags, correlate, buildTimeline } from "./clinical";
+import { checkRedFlags, correlate, buildTimeline, safetyCoverage } from "./clinical";
 import type { ChartSlice } from "./fixtures";
 import { t, LOCALES, type Locale } from "./i18n";
 
@@ -92,6 +92,24 @@ export class PrologueSession {
     const callsBefore = this.map.calls.length;
     this.transcript += " " + text;
 
+    // Record once, on the first clinical turn, whether the safety rules can
+    // screen this language at all.
+    if (!this.map.safetyCoverage) {
+      const cov = safetyCoverage(this.locale);
+      this.map.safetyCoverage = { covered: cov.covered, locale: this.locale, note: cov.note };
+      if (!cov.covered) {
+        this.addItem({
+          source: "INFERRED",
+          text: cov.note!,
+          rule: "safety-coverage-unavailable",
+          severity: "moderate",
+          citation: { label: "Prologue safety-rule coverage" },
+          // Deliberately no patientText: this is a fact for the clinician about
+          // what the system could not do, not something to tell the patient.
+        });
+      }
+    }
+
     this.addItem({
       source: "PATIENT",
       text,
@@ -104,7 +122,7 @@ export class PrologueSession {
 
     /* ---- 1. Safety, every turn, deterministic ---- */
     const t0 = performance.now();
-    const flag = checkRedFlags(this.transcript);
+    const flag = checkRedFlags(this.transcript, this.locale);
     this.record({
       name: "check_red_flags",
       ms: Math.round((performance.now() - t0) * 100) / 100,

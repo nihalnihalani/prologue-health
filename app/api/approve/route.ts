@@ -4,7 +4,9 @@ import {
   approveIntake,
   NotAuthorizedError,
   UnknownItemsError,
+  IncompleteReviewError,
   InvalidTransitionError,
+  type ItemDecision,
 } from "@/lib/intake";
 import { IntegrationUnavailableError, runtimeMode } from "@/lib/runtime";
 
@@ -27,7 +29,7 @@ export async function POST(req: Request) {
     sessionId?: string;
     clinicianId?: string;
     clinicianSecret?: string;
-    rejectedIds?: string[];
+    decisions?: ItemDecision[];
   };
   try {
     body = await req.json();
@@ -35,7 +37,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
-  const { sessionId, clinicianId, clinicianSecret, rejectedIds = [] } = body;
+  const { sessionId, clinicianId, clinicianSecret, decisions = [] } = body;
   if (!sessionId) return NextResponse.json({ error: "sessionId is required" }, { status: 400 });
   if (!clinicianId) return NextResponse.json({ error: "clinicianId is required" }, { status: 400 });
 
@@ -50,7 +52,7 @@ export async function POST(req: Request) {
       sessionId,
       clinicianId,
       clinicianSecret,
-      rejectedItemIds: rejectedIds,
+      decisions,
     });
     putSession(session);
 
@@ -72,6 +74,13 @@ export async function POST(req: Request) {
     }
     if (err instanceof UnknownItemsError) {
       return NextResponse.json({ error: err.message }, { status: 422 });
+    }
+    if (err instanceof IncompleteReviewError) {
+      // The clinician has not ruled on everything promotable. Refusing is the
+      // point: an unread packet must not promote itself.
+      return NextResponse.json(
+        { error: err.message, undecided: err.undecided }, { status: 422 }
+      );
     }
     if (err instanceof InvalidTransitionError) {
       return NextResponse.json({ error: err.message, state: session.state }, { status: 409 });

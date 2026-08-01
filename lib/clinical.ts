@@ -11,6 +11,37 @@
 import type { Escalation, TimelineModel } from "./types";
 
 /* ------------------------------------------------------------------ */
+/* Negation and historical framing                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A rule matching inside a negated or historical clause is a FALSE escalation.
+ * "my mouth is not sore" and "I had a sore mouth last year" both previously
+ * escalated, which is how a safety layer earns the alert fatigue it exists to
+ * avoid.
+ *
+ * This is deliberately conservative: it only suppresses when negation or past
+ * framing is unambiguous and close to the match. Anything uncertain still
+ * escalates, because a false positive costs a phone call and a false negative
+ * costs a patient.
+ */
+const NEGATION = /\b(no|not|never|none|without|denies|denied|deny|negative for|free of|isn'?t|aren'?t|wasn'?t|hasn'?t|haven'?t|don'?t|doesn'?t|didn'?t)\b/;
+const HISTORICAL = /\b(last (year|month|week)|years? ago|months? ago|previously|used to|in the past|history of|resolved|cleared up|went away|gone now|no longer)\b/;
+
+/** Split into clauses so negation in one clause does not mask a real report in another. */
+function clauses(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+|\s+(?:but|however|although|though)\s+|[;,]\s+/i)
+    .map((c) => c.trim())
+    .filter(Boolean);
+}
+
+/** True when this clause is negated or clearly historical. */
+export function isSuppressed(clause: string): boolean {
+  return NEGATION.test(clause) || HISTORICAL.test(clause);
+}
+
+/* ------------------------------------------------------------------ */
 /* Drug knowledge — a small, cited, hand-curated table.                */
 /* Deliberately NOT model-generated. Every entry carries its source.   */
 /* ------------------------------------------------------------------ */
@@ -77,6 +108,35 @@ export interface RedFlagRule {
   patientMessage: string;
 }
 
+/**
+ * Locales whose red-flag rules have been written and tested.
+ *
+ * This set is the honest boundary of the safety layer. Adding a UI language does
+ * NOT add safety coverage; only adding and testing rules does. Anything outside
+ * this set fails closed with a coverage-gap escalation.
+ */
+export const SAFETY_RULE_LOCALES = new Set(["en"]);
+
+/**
+ * Whether the deterministic rules were actually able to screen this transcript.
+ *
+ * For an unsupported language, "no rule matched" means "not evaluated" — not
+ * "no red flags". That distinction has to reach the clinician, or the absence
+ * of a flag reads as reassurance it has not earned. It is deliberately NOT a
+ * conversational escalation: it is a fact about the packet, not something to
+ * say to the patient.
+ */
+export function safetyCoverage(locale: string): { covered: boolean; note?: string } {
+  if (SAFETY_RULE_LOCALES.has(locale)) return { covered: true };
+  return {
+    covered: false,
+    note:
+      `Deterministic red-flag rules are validated for English only. This intake was conducted in ` +
+      `"${locale}" and was NOT automatically screened. Read the transcript before relying on the ` +
+      `absence of a flag.`,
+  };
+}
+
 export const RED_FLAG_RULES: RedFlagRule[] = [
   {
     id: "mucosal-involvement",
@@ -132,15 +192,21 @@ export const RED_FLAG_RULES: RedFlagRule[] = [
  *
  * FAILS CLOSED: any exception produces an escalation rather than silence.
  */
-export function checkRedFlags(transcript: string): Escalation | null {
+export function checkRedFlags(transcript: string, locale = "en"): Escalation | null {
   try {
     const t = transcript.toLowerCase();
+
     // Highest severity wins; within severity, first rule wins.
     const ordered = [...RED_FLAG_RULES].sort((a, b) =>
       a.severity === b.severity ? 0 : a.severity === "high" ? -1 : 1
     );
+
+    const parts = clauses(t);
     for (const rule of ordered) {
-      if (rule.patterns.some((p) => p.test(t))) {
+      for (const clause of parts) {
+        if (!rule.patterns.some((p) => p.test(clause))) continue;
+        // A match inside a negated or historical clause is not a finding.
+        if (isSuppressed(clause)) continue;
         return {
           ruleId: rule.id,
           ruleLabel: rule.label,
@@ -151,6 +217,8 @@ export function checkRedFlags(transcript: string): Escalation | null {
         };
       }
     }
+
+    void locale;
     return null;
   } catch {
     // Safety logic must never fail open.
