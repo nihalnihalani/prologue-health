@@ -384,9 +384,30 @@ This follows Medplum's own documented **["can suggest, but not act"](https://www
 
 ---
 
+## Running it
+
+```bash
+npm install && npm run dev     # http://localhost:3000
+```
+
+**No credentials required** — with no keys the app runs on a deterministic
+synthetic fixture and labels every screen `FIXTURE` rather than implying a live
+backend. See **[RUNNING.md](RUNNING.md)** for the demo script and fallbacks.
+
+| Route | |
+|---|---|
+| `/patient` | Mobile-first voice check-in |
+| `/clinician` | Desktop review and the approval gate |
+| `/prove` | **Hand this to a judge** — change a fact, watch the question change |
+
+```bash
+npm test        # 25 tests — clinical rules, engine, safety invariants
+npm run build   # production build
+```
+
 ## Status
 
-**Design complete and grounded. Not yet implemented.**
+**Built and verified. Golden path works end to end.**
 
 The design was produced adversarially — an ideator generating candidates, a researcher verifying every factual claim against primary sources, and a devil's advocate whose only job was to kill ideas. **It was right three times against the lead's position.** Six reversals are recorded in the decision log, including *"skip the 271 and fire a 278"* — which turned out to be impossible, because Stedi test mode doesn't support 278 at all.
 
