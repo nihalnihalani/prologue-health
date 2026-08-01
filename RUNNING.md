@@ -194,8 +194,12 @@ name, asserted against a forbidden-terms regex across every rule and locale.
   recorded on the `Provenance` comes from the server rather than a client
   display string. SSO/RBAC is Phase 3 and is required before real PHI.
 - **The durable FHIR write is unverified against a live Medplum project.** With
-  no credentials the transaction runs, labels itself `origin: "fixture"`, warns
-  that the record is not live, and (in pilot mode) refuses outright.
+  no credentials the transaction runs, records every resource as
+  `not-attempted` with no id, warns that nothing was persisted, and in pilot
+  mode refuses outright.
+- **Pilot finalization is unavailable from the browser by design.** The roster is
+  demo-only and the pilot secret is server-side, so the clinician UI disables
+  signing in pilot mode rather than letting a click fail with a 403.
 - **Clinician-facing translation is not implemented.** When a patient speaks
   Spanish, the clinician sees the original Spanish tagged `original · es-US`,
   not an English rendering. Showing a machine translation *as* the clinical

@@ -83,19 +83,38 @@ export interface IntakeSession {
   signature?: SignatureRecord;
 }
 
+/**
+ * The outcome of one persistence attempt.
+ *
+ * A receipt may only claim a resource was written when THAT write succeeded.
+ * Placeholder ids were previously emitted as though they were FHIR resources.
+ */
+export interface WriteReceipt {
+  resourceType: string;
+  /** Present only when a real server assigned one. */
+  id?: string;
+  status: "written" | "not-attempted" | "failed";
+  origin: "live" | "fixture";
+  error?: string;
+}
+
 export interface SignatureRecord {
   by: string;
   at: string;
   approvedItemIds: string[];
   editedItemIds: string[];
   rejectedItemIds: string[];
-  compositionId: string;
-  provenanceId: string;
-  auditEventId: string;
-  /** Whether the durable write actually reached Medplum. */
-  persisted: boolean;
+  /** Per-resource truth. No entry means it was never attempted. */
+  writes: WriteReceipt[];
+  /** True only when EVERY attempted write succeeded against a live server. */
+  fullyPersisted: boolean;
+  /** True when some writes landed and others did not — inspectable, retryable. */
+  partial: boolean;
   origin: "live" | "fixture";
 }
+
+/** Stable key so a retry does not create unbounded duplicates. */
+export const idempotencyKey = (sessionId: string) => `prologue-intake-${sessionId}`;
 
 /* ------------------------------------------------------------------ */
 /* Authorisation                                                       */
@@ -431,41 +450,55 @@ export async function approveIntake(
   //    accidentally finalize anything.
   const drafts = projectDrafts(session);
   const composition = buildComposition(session, clinician);
-  let persisted = false;
-  let compositionId = `local/Composition/${session.id}`;
-  let origin: "live" | "fixture" = "fixture";
-
-  if (medplumConfigured) {
-    const draftWrite = await writeDraft([...drafts, composition]);
-    persisted = !draftWrite.simulated;
-    origin = draftWrite.simulated ? "fixture" : "live";
-    const created = draftWrite.data.ids.find((x) => x.startsWith("Composition/"));
-    if (created) compositionId = created;
-    if (draftWrite.simulated) {
-      assertFixtureAllowed("Medplum", "draft persistence fell back to a fixture");
-      warnings.push("Medplum write degraded to a fixture; the durable record is NOT live");
-    }
-  } else {
-    assertFixtureAllowed("Medplum", "no credentials configured");
-    warnings.push("Medplum is not configured; the durable record is a fixture");
-  }
-
-  // 6. The real preliminary -> final transition, server-side, after the drafts land.
+  const writes: WriteReceipt[] = [];
   const now = new Date().toISOString();
-  if (persisted) {
-    const fin = await finalizeComposition(compositionId.split("/")[1], clinician.name, now);
-    if (!fin.ok) {
-      // Do NOT report success we did not achieve.
-      throw new Error(`composition finalization failed: ${fin.error ?? "unknown"}`);
+  let compositionId: string | undefined;
+  const origin: "live" | "fixture" = medplumConfigured ? "live" : "fixture";
+
+  if (!medplumConfigured) {
+    assertFixtureAllowed("Medplum", "no credentials configured");
+    warnings.push("Medplum is not configured; NOTHING was persisted");
+    for (const r of [...drafts, composition]) {
+      writes.push({ resourceType: String(r.resourceType), status: "not-attempted", origin: "fixture" });
     }
   } else {
-    warnings.push("preliminary -> final was recorded locally only");
+    try {
+      const w = await writeDraft([...drafts, composition]);
+      if (w.simulated) {
+        assertFixtureAllowed("Medplum", "draft persistence degraded to a fixture");
+        warnings.push("Medplum write degraded; the durable record is NOT live");
+        for (const r of [...drafts, composition]) {
+          writes.push({ resourceType: String(r.resourceType), status: "failed", origin: "fixture", error: w.detail });
+        }
+      } else {
+        for (const id of w.data.ids) {
+          const [type, rid] = id.split("/");
+          writes.push({ resourceType: type, id: rid, status: "written", origin: "live" });
+          if (type === "Composition") compositionId = rid;
+        }
+      }
+    } catch (err) {
+      // Nothing has been finalized yet, so failing here is clean.
+      throw new Error(`draft persistence failed before finalization: ${(err as Error).message}`);
+    }
   }
 
-  // 7. Provenance and AuditEvent are written, not merely returned.
+  // 6. The real preliminary -> final transition, only after drafts landed.
+  let finalized = false;
+  if (compositionId) {
+    const fin = await finalizeComposition(compositionId, clinician.name, now);
+    if (!fin.ok) throw new Error(`composition finalization failed: ${fin.error ?? "unknown"}`);
+    finalized = true;
+  } else {
+    warnings.push("Composition was not persisted; preliminary -> final was NOT performed");
+  }
+
+  // 7. Provenance and AuditEvent. If these fail the signature is PARTIAL —
+  //    the Composition is final but its attestation trail is incomplete. That
+  //    is recorded rather than hidden, and the key makes a retry safe.
   const provenance = {
     resourceType: "Provenance",
-    target: [{ reference: compositionId }],
+    target: compositionId ? [{ reference: `Composition/${compositionId}` }] : [],
     recorded: now,
     agent: [
       {
@@ -475,7 +508,6 @@ export async function approveIntake(
     ],
     activity: { text: "Clinician review and attestation of pre-visit brief" },
   };
-
   const auditEvent = {
     resourceType: "AuditEvent",
     type: { system: "http://terminology.hl7.org/CodeSystem/audit-event-type", code: "rest", display: "RESTful Operation" },
@@ -485,29 +517,54 @@ export async function approveIntake(
     agent: [{ who: { display: clinician.name }, requestor: true }],
     source: { observer: { display: "Prologue" } },
     entity: [
-      { what: { reference: compositionId }, detail: [{ type: "approvedItems", valueString: String(approvedItemIds.length) }, { type: "editedItems", valueString: String(editedItemIds.length) }, { type: "rejectedItems", valueString: String(rejectedItemIds.length) }] },
+      {
+        what: compositionId ? { reference: `Composition/${compositionId}` } : undefined,
+        detail: [
+          { type: "idempotencyKey", valueString: idempotencyKey(session.id) },
+          { type: "approvedItems", valueString: String(approvedItemIds.length) },
+          { type: "editedItems", valueString: String(editedItemIds.length) },
+          { type: "rejectedItems", valueString: String(rejectedItemIds.length) },
+        ],
+      },
     ],
   };
 
-  let provenanceId = `local/Provenance/${session.id}`;
-  let auditEventId = `local/AuditEvent/${session.id}`;
-  if (medplumConfigured) {
-    const w = await writeDraft([provenance, auditEvent]);
-    provenanceId = w.data.ids.find((x) => x.startsWith("Provenance/")) ?? provenanceId;
-    auditEventId = w.data.ids.find((x) => x.startsWith("AuditEvent/")) ?? auditEventId;
+  if (medplumConfigured && finalized) {
+    try {
+      const w = await writeDraft([provenance, auditEvent]);
+      if (w.simulated) throw new Error(w.detail ?? "degraded");
+      for (const id of w.data.ids) {
+        const [type, rid] = id.split("/");
+        writes.push({ resourceType: type, id: rid, status: "written", origin: "live" });
+      }
+    } catch (err) {
+      const msg = (err as Error).message;
+      for (const t of ["Provenance", "AuditEvent"]) {
+        writes.push({ resourceType: t, status: "failed", origin: "live", error: msg });
+      }
+      warnings.push(
+        `attestation trail incomplete: ${msg}. The Composition is final but Provenance/AuditEvent ` +
+          `did not persist. Retry is safe — idempotency key ${idempotencyKey(session.id)}.`
+      );
+    }
+  } else {
+    for (const t of ["Provenance", "AuditEvent"]) {
+      writes.push({ resourceType: t, status: "not-attempted", origin });
+    }
   }
 
   // 8. Commit.
+  const attempted = writes.filter((w) => w.status !== "not-attempted");
+  const succeeded = writes.filter((w) => w.status === "written");
   const signature: SignatureRecord = {
     by: clinician.name,
     at: now,
     approvedItemIds,
     editedItemIds,
     rejectedItemIds,
-    compositionId,
-    provenanceId,
-    auditEventId,
-    persisted,
+    writes,
+    fullyPersisted: attempted.length > 0 && attempted.length === succeeded.length,
+    partial: succeeded.length > 0 && succeeded.length < attempted.length,
     origin,
   };
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { upsertFromMap, getSession, latestSession, listSessions, transition } from "@/lib/store";
+import { InvalidTransitionError } from "@/lib/intake";
 import { runtimeMode } from "@/lib/runtime";
 import type { StoryMap } from "@/lib/types";
 import { PATIENT_ID } from "@/lib/fixtures";
@@ -26,6 +27,38 @@ export async function POST(req: Request) {
       accepted: session.state !== "signed" || session.map === body,
     });
   } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 400 });
+  }
+}
+
+/**
+ * Explicit lifecycle actions. Reads never mutate; this does.
+ *   { sessionId, action: "claim" }   ready_for_review -> under_review
+ *   { sessionId, action: "release" } under_review -> ready_for_review
+ */
+export async function PATCH(req: Request) {
+  try {
+    const { sessionId, action, clinicianId } = (await req.json()) as {
+      sessionId?: string;
+      action?: "claim" | "release";
+      clinicianId?: string;
+    };
+    if (!sessionId || !action) {
+      return NextResponse.json({ error: "sessionId and action are required" }, { status: 400 });
+    }
+    const existing = getSession(sessionId);
+    if (!existing) return NextResponse.json({ error: "unknown session" }, { status: 404 });
+
+    const to = action === "claim" ? "under_review" : "ready_for_review";
+    const s = transition(sessionId, to);
+    if (action === "claim" && clinicianId) s.assignedTo = clinicianId;
+    if (action === "release") s.assignedTo = undefined;
+
+    return NextResponse.json({ id: s.id, state: s.state, assignedTo: s.assignedTo ?? null });
+  } catch (err) {
+    if (err instanceof InvalidTransitionError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
     return NextResponse.json({ error: (err as Error).message }, { status: 400 });
   }
 }
@@ -60,14 +93,10 @@ export async function GET(req: Request) {
   const session = id ? getSession(id) : latestSession();
   if (!session) return NextResponse.json({ session: null, mode: runtimeMode() });
 
-  // Opening a queued session marks it under review.
-  if (id && session.state === "ready_for_review") {
-    try {
-      transition(id, "under_review");
-    } catch {
-      /* benign race */
-    }
-  }
+  // READS ARE SIDE-EFFECT FREE.
+  // This previously moved ready_for_review -> under_review on GET, so polling or
+  // merely opening a link silently claimed a case. Claiming is now a deliberate
+  // clinician action: PATCH /api/session with { action: "claim" }.
 
   return NextResponse.json({
     mode: runtimeMode(),
@@ -77,6 +106,7 @@ export async function GET(req: Request) {
       state: session.state,
       locale: session.locale,
       updatedAt: session.updatedAt,
+      assignedTo: session.assignedTo ?? null,
       signature: session.signature ?? null,
     },
     map: session.map,

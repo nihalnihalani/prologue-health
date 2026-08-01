@@ -17,10 +17,13 @@ Prologue is a chart-aware, voice-first pre-visit intake. A patient describes why
 - `app/clinician/page.tsx`: clinician review and approval UI.
 - `app/prove/page.tsx`: interactive proof that chart-conditioned questions are computed, not scripted.
 - `lib/session.ts`: shared conversation engine.
+- `lib/intake.ts`: server-owned lifecycle, FHIR draft projection, explicit clinician decisions, and finalization transaction.
+- `lib/runtime.ts`: demo-versus-pilot behavior and data-origin rules.
 - `lib/types.ts`: the single `StoryMap` model used by patient and clinician views.
 - `lib/clinical.ts`: deterministic drug-correlation and red-flag logic.
 - `lib/medplum.ts` and `lib/stedi.ts`: FHIR and eligibility adapters with explicitly labeled fixture fallbacks.
 - `lib/deepgram-live.ts`, `lib/gemini-live.ts`, and `lib/voice.ts`: live and fallback voice paths.
+- `tests/adversarial.test.ts`: executable claim audit for the failure modes most likely to destroy clinical trust.
 
 ## Product invariants
 
@@ -39,14 +42,16 @@ Prologue is a chart-aware, voice-first pre-visit intake. A patient describes why
 ## Prototype boundaries to address during product work
 
 - Patient, appointment, clinician, subscriber, and coverage details are currently tied to the Maria Delgado fixture in several runtime paths.
-- The server session store is an in-process `Map` with a two-hour TTL and 50-session cap; `localStorage` is a same-browser fallback. Neither is durable or suitable for multiple instances.
-- The warmed chart cache is process-local and not patient-keyed.
-- Synthetic FHIR dates are generated as date-only UTC strings and later converted back with `Date`; rounding elapsed milliseconds can shift a nominal “22 days ago” value by a day depending on run time and timezone. Keep clinical interval calculations calendar-based and make their tests clock-stable.
-- The clinician screen loads the latest session rather than a durable, assigned work queue.
-- Approval currently returns a final-looking response while the durable Medplum write remains preliminary. Production work must make the server-authoritative FHIR transition, accepted/rejected item set, `Provenance`, and `AuditEvent` real, atomic or safely retryable, and idempotent.
-- Live integration failures currently fall back to clearly labeled fixtures. Keep that useful demo behavior isolated from production configuration, where silent synthetic fallback is unacceptable.
+- The server session store is an in-process `Map` with a two-hour TTL for unsigned sessions and a 200-session soft bound. Signed sessions are retained in-process, but all sessions still disappear on restart and are unsuitable for multiple instances; `localStorage` is only a same-browser fallback.
+- The warmed chart cache is patient-keyed but process-local; it is not shared across instances.
+- A prior elapsed-milliseconds calculation shifted nominal day intervals across times and timezones. Preserve the calendar-day implementation and its clock-stable boundary tests.
+- A queue API exists and orders escalations first, but the clinician screen still opens the latest session instead of presenting the queue with stable detail routes and assignment.
+- Approval is server-authoritative and explicit. The receipt now records per-resource `WriteReceipt` entries (`written` / `not-attempted` / `failed`) and never emits a placeholder id as a FHIR resource; `fullyPersisted` and `partial` are derived from attempted-versus-succeeded writes, and an incomplete attestation trail is surfaced as recoverable with a stable `idempotencyKey`. Live persistence itself remains unverified against a real Medplum project.
+- Session reads are side-effect free. Claiming a case is an explicit `PATCH /api/session { action: "claim" }`; a `GET` never transitions state.
+- Pilot finalization is deliberately unavailable from the browser: the roster is demo-only and the pilot secret is server-side, so the clinician UI disables signing in pilot mode and says why.
+- Labeled fixture fallback is permitted in demo mode only. Both the Medplum and Stedi adapters now enforce the pilot-mode prohibition on missing credentials and on request failure, and a non-object HTTP-200 payload is treated as a failure rather than as coverage.
 - Drug knowledge contains three hand-curated examples; it is a demonstration mechanism, not a clinical knowledge base.
-- Clinician-facing translation, source-linked correction history, durable audio/transcript storage, role-based access, and deployment/compliance controls are not yet complete.
+- Identity is a static server-side roster, not real authentication or Medplum-enforced role separation. Clinician-facing translation, source-linked correction history, durable transcript storage, and deployment/compliance controls are not yet complete. Audio capture is intentionally out of scope, not an implied feature.
 
 ## Working in this repo
 

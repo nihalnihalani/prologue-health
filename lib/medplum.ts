@@ -15,6 +15,8 @@ export interface Timed<T> {
   data: T;
   ms: number;
   simulated: boolean;
+  /** Why a result degraded. Present when an integration failed. */
+  detail?: string;
 }
 
 const baseUrl = process.env.MEDPLUM_BASE_URL || "https://api.medplum.com/";
