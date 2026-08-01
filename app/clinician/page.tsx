@@ -11,6 +11,7 @@ const STORE_KEY = "prologue:storymap";
 
 export default function ClinicianPage() {
   const [map, setMap] = useState<StoryMap | null>(null);
+  const [queue, setQueue] = useState<any[]>([]);
   const [queueFilter, setQueueFilter] = useState<"review" | "mine" | "completed">("review");
   // Explicit ruling per promotable item. No default — an unreviewed item blocks
   // signing rather than promoting itself.
@@ -34,10 +35,15 @@ export default function ClinicianPage() {
   const [replayed, setReplayed] = useState(false);
 
   const load = useCallback(async () => {
-    // Server is authoritative. localStorage is a same-browser fallback only, and
-    // is never allowed to declare finality.
     try {
-      const res = await fetch("/api/session");
+      const qRes = await fetch("/api/session?queue=1");
+      if (qRes.ok) {
+        const qj = await qRes.json();
+        setQueue(qj.sessions || []);
+      }
+      
+      const fetchUrl = sessionId ? `/api/session?id=${sessionId}` : "/api/session";
+      const res = await fetch(fetchUrl);
       if (res.ok) {
         const j = (await res.json()) as {
           map: StoryMap | null;
@@ -63,7 +69,7 @@ export default function ClinicianPage() {
         setSource("local");
       }
     } catch { /* ignore */ }
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => {
     void load();
@@ -135,7 +141,7 @@ export default function ClinicianPage() {
 
   if (!map) {
     return (
-      <motion.main initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ maxWidth: 720, margin: "0 auto", padding: 40 }}>
+      <motion.main initial={false} animate={{ opacity: 1 }} style={{ maxWidth: 720, margin: "0 auto", padding: 40 }}>
         <h1 style={{ fontSize: 21 }}>Nothing in the queue</h1>
         <p className="muted">Run a patient check-in first, then come back.</p>
         <Link href="/patient" className="btn primary" style={{ textDecoration: "none" }}>Open patient check-in →</Link>
@@ -197,51 +203,35 @@ export default function ClinicianPage() {
             <button className="btn" style={{ flex: 1, padding: "6px 8px", fontSize: 11, background: queueFilter === "completed" ? "var(--accent-2)" : "var(--surface)", borderColor: queueFilter === "completed" ? "var(--accent)" : "var(--line)" }} onClick={() => setQueueFilter("completed")}>Done</button>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {/* Active Real Case (Maria) */}
-            {queueFilter !== "completed" && (
-              <div style={{ padding: 10, borderRadius: 6, border: "1px solid var(--accent)", background: "var(--surface)", cursor: "pointer" }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {queue
+              .filter(q => {
+                if (queueFilter === "review") return q.state === "ready_for_review" || q.state === "under_review";
+                if (queueFilter === "mine") return q.state === "under_review"; // For simplicity
+                if (queueFilter === "completed") return q.state === "signed";
+                return true;
+              })
+              .map((q) => (
+              <div 
+                key={q.id} 
+                onClick={() => setSessionId(q.id)}
+                style={{ 
+                  padding: 10, borderRadius: 6, 
+                  border: sessionId === q.id ? "1px solid var(--action)" : "1px solid var(--line)", 
+                  background: "var(--surface)", 
+                  cursor: "pointer" 
+                }}
+              >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <strong style={{ fontSize: 13, color: "var(--ink)" }}>{map.patient.name}</strong>
-                  <span className="chip live" style={{ fontSize: 9, padding: "2px 6px" }}>assigned</span>
+                  <strong style={{ fontSize: 13, color: "var(--ink)" }}>{q.patient}</strong>
+                  <span className={`chip ${q.state === 'signed' ? 'live' : 'sim'}`} style={{ fontSize: 9, padding: "2px 6px" }}>{q.state}</span>
                 </div>
-                <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 4 }}>{map.patient.appointment.reason}</div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--ink-3)", marginTop: 8 }}>
-                  <span>Wait: 22m</span>
-                  <span>screening: active</span>
+                <div style={{ fontSize: 11.5, color: "var(--ink-secondary)", marginTop: 4 }}>Items: {q.itemCount}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--ink-muted)", marginTop: 8 }}>
+                  <span>{q.locale}</span>
                 </div>
               </div>
-            )}
-
-            {/* Simulated Case 1 */}
-            {queueFilter === "review" && (
-              <div style={{ padding: 10, borderRadius: 6, border: "1px solid var(--line)", background: "var(--surface)", opacity: 0.7, cursor: "not-allowed" }} title="This is a demo placeholder">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <strong style={{ fontSize: 13 }}>John Doe</strong>
-                  <span className="chip sim" style={{ fontSize: 9, padding: "2px 6px" }}>unassigned</span>
-                </div>
-                <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 4 }}>Fever and sore throat</div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--ink-3)", marginTop: 8 }}>
-                  <span>Wait: 5m</span>
-                  <span>English (verified)</span>
-                </div>
-              </div>
-            )}
-
-            {/* Simulated Case 2 */}
-            {queueFilter === "completed" && (
-              <div style={{ padding: 10, borderRadius: 6, border: "1px solid var(--line)", background: "var(--surface)", opacity: 0.7, cursor: "not-allowed" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <strong style={{ fontSize: 13 }}>Sarah Jenkins</strong>
-                  <span className="chip live" style={{ fontSize: 9, padding: "2px 6px", background: "var(--provenance-patient-bg)", color: "var(--provenance-patient-fg)" }}>signed</span>
-                </div>
-                <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 4 }}>Routine wellness visit</div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--ink-3)", marginTop: 8 }}>
-                  <span>Signed: Today</span>
-                  <span>completed</span>
-                </div>
-              </div>
-            )}
+            ))}
           </div>
         </motion.div>
 

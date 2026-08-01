@@ -182,10 +182,14 @@ export default function ProvePage() {
             aria-pressed={active === p.key}
             style={{
               textAlign: "left",
+              whiteSpace: "normal",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              width: "100%",
               padding: "12px 14px",
               textTransform: "none",
               letterSpacing: 0,
-              fontFamily: "var(--sans)",
+              fontFamily: "var(--sans), sans-serif",
               fontSize: 14,
               borderColor: active === p.key ? "var(--accent)" : "var(--line)",
               background: active === p.key ? "var(--accent-2)" : "var(--surface)",

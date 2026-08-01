@@ -1,24 +1,26 @@
 :root {
-  --bg: #F3F0E8; /* Warm page background (canvas) */
-  --surface: #FFFDF8; /* Primary casefile surface */
-  --surface-raised: #FFFFFF; /* Menus, dialogs, signing dock */
-  --surface-sunken: #E9EDE8; /* Inputs, secondary strips, inactive rows */
-  --ink: #18211D; /* Primary text */
-  --ink-2: #44504A; /* Supporting text (ink-secondary) */
-  --ink-3: #626E68; /* Metadata (ink-muted) */
-  --line: #C9D0CA; /* Default rules and panel boundaries */
-  --line-soft: #E9EDE8; /* Soft rules */
-  --line-strong: #98A49E; /* Inputs, dividers, selected outlines */
-  --accent: #1F526B; /* Primary action / links (action) */
-  --accent-2: #DCE9ED; /* Selected/secondary action surface (action-soft) */
-  --action-hover: #163E52; /* Primary hover/pressed */
-  --focus: #007C89; /* Keyboard focus ring */
-  --focus-soft: #B7DCE1; /* Outer focus halo */
-  
-  --crit: #A4372A; /* Confirmed urgent/failed state only (critical) */
-  --crit-bg: #F5DFDB; /* Critical surface (critical-soft) */
-  --warn: #8C5C0A; /* Incomplete, unknown, attention (warning) */
-  --warn-bg: #F5E8C8; /* Warning surface (warning-soft) */
+  --canvas: #F3F0E8;
+  --surface: #FFFDF8;
+  --surface-raised: #FFFFFF;
+  --surface-sunken: #E9EDE8;
+  --ink: #18211D;
+  --ink-secondary: #44504A;
+  --ink-muted: #626E68;
+  --line: #C9D0CA;
+  --line-strong: #98A49E;
+  --action: #1F526B;
+  --action-hover: #163E52;
+  --action-soft: #DCE9ED;
+  --focus: #007C89;
+  --focus-soft: #B7DCE1;
+  --critical: #A4372A;
+  --critical-soft: #F5DFDB;
+  --warning: #8C5C0A;
+  --warning-soft: #F5E8C8;
+  --approved: #2E664F;
+  --approved-soft: #DCE9E1;
+  --info: #365E8D;
+  --info-soft: #E0E8F1;
   
   /* Provenance colors */
   --provenance-patient-fg: #0B6B66;
@@ -32,33 +34,33 @@
   --provenance-clinician-fg: #674478;
   --provenance-clinician-bg: #EDE4F0;
 
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  --sans: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", sans-serif;
-  --serif: "Literata", Georgia, serif;
   --r: 8px;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #101512; /* Canvas */
-    --surface: #171D19; /* Primary casefile */
-    --surface-raised: #1D2520; /* Menus, signing dock */
-    --surface-sunken: #121714; /* Secondary strips */
-    --ink: #F5F2E9; /* Primary text */
-    --ink-2: #CDD4CD; /* Supporting text */
-    --ink-3: #98A39C; /* Metadata */
-    --line: #3B463F; /* Boundaries */
-    --line-soft: #1D2520;
-    --line-strong: #58655D; /* Dividers */
-    --accent: #8DC5D5; /* Primary action */
-    --accent-2: #203C45; /* Action soft */
+    --canvas: #101512;
+    --surface: #171D19;
+    --surface-raised: #1D2520;
+    --surface-sunken: #121714;
+    --ink: #F5F2E9;
+    --ink-secondary: #CDD4CD;
+    --ink-muted: #98A39C;
+    --line: #3B463F;
+    --line-strong: #58655D;
+    --action: #8DC5D5;
     --action-hover: #B5DAE3;
+    --action-soft: #203C45;
     --focus: #7FD4DE;
-    --crit: #FF9584; /* Critical */
-    --crit-bg: #47231F; /* Critical soft */
-    --warn: #E4BB68; /* Warning */
-    --warn-bg: #40341F; /* Warning soft */
+    --critical: #FF9584;
+    --critical-soft: #47231F;
+    --warning: #E4BB68;
+    --warning-soft: #40341F;
+    --approved: #8BC2A3;
+    --approved-soft: #20382C;
+    --info: #8DC5D5;
+    --info-soft: #203C45;
     color-scheme: dark;
   }
 }
@@ -67,15 +69,15 @@
 html, body { padding: 0; margin: 0; }
 
 body {
-  background: var(--bg);
+  background: var(--canvas);
   color: var(--ink);
-  font-family: var(--sans);
+  font-family: var(--sans), sans-serif;
   font-size: 15px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
 
-a { color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 4px; transition: color 0.15s ease; }
+a { color: var(--action); text-decoration-thickness: 2px; text-underline-offset: 4px; transition: color 0.15s ease; }
 a:hover { color: var(--action-hover); }
 
 /* Provenance badge styling */
@@ -92,16 +94,16 @@ a:hover { color: var(--action-hover); }
 .bg-CLINICIAN { background: var(--provenance-clinician-fg); }
 
 .chip {
-  font-family: var(--mono); font-size: 11px; letter-spacing: .08em;
+  font-family: var(--mono), monospace; font-size: 11px; letter-spacing: .08em;
   text-transform: uppercase; padding: 4px 10px; border-radius: 999px;
-  border: 1px solid var(--line); color: var(--ink-3); white-space: nowrap;
+  border: 1px solid var(--line); color: var(--ink-muted); white-space: nowrap;
   font-weight: 500;
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 .chip.live { color: var(--provenance-patient-fg); border-color: var(--provenance-patient-fg); background: var(--provenance-patient-bg); }
-.chip.sim  { color: var(--warn);  border-color: var(--warn); background: var(--warn-bg); }
+.chip.sim  { color: var(--warning);  border-color: var(--warning); background: var(--warning-soft); }
 
 .card {
   background: var(--surface); border: 1px solid var(--line);
@@ -112,53 +114,53 @@ a:hover { color: var(--action-hover); }
 
 .card > header {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 14px 18px; border-bottom: 1px solid var(--line-soft);
+  padding: 14px 18px; border-bottom: 1px solid var(--line);
   background: var(--surface-sunken);
 }
 .card > header h2 {
-  margin: 0; font-family: var(--sans); font-size: 14px; letter-spacing: .02em;
+  margin: 0; font-family: var(--sans), sans-serif; font-size: 14px; letter-spacing: .02em;
   font-weight: 600; color: var(--ink);
 }
 .card .body { padding: 18px; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  appearance: none; font-family: var(--sans); font-size: 13px; font-weight: 500;
+  appearance: none; font-family: var(--sans), sans-serif; font-size: 13px; font-weight: 500;
   padding: 10px 18px; border-radius: 4px; min-height: 40px;
-  border: 1px solid var(--line); background: var(--surface); color: var(--ink-2);
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink-secondary);
   cursor: pointer; white-space: nowrap; transition: all .2s ease;
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 }
 .btn:hover:not(:disabled) { border-color: var(--line-strong); color: var(--ink); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
 .btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
-.btn.primary { border-color: var(--accent); background: var(--accent); color: white; }
-.btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); color: var(--accent); }
+.btn.primary { border-color: var(--action); background: var(--action); color: white; }
+.btn.primary:hover:not(:disabled) { background: var(--action-soft); border-color: var(--action-soft); color: var(--action); }
 @media (prefers-color-scheme: dark) {
-  .btn.primary { border-color: var(--accent); background: var(--accent); color: var(--bg); }
-  .btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); color: var(--accent); }
+  .btn.primary { border-color: var(--action); background: var(--action); color: var(--canvas); }
+  .btn.primary:hover:not(:disabled) { background: var(--action-soft); border-color: var(--action-soft); color: var(--action); }
 }
 
-.btn.danger { border-color: var(--crit); color: var(--crit); }
-.btn.danger:hover:not(:disabled) { background: var(--crit-bg); }
+.btn.danger { border-color: var(--critical); color: var(--critical); }
+.btn.danger:hover:not(:disabled) { background: var(--critical-soft); }
 .btn.big { font-size: 15px; padding: 14px 26px; border-radius: 4px; }
 
 .pill {
-  font-family: var(--mono); padding: 4px 12px; border-radius: 999px; font-size: 11px;
+  font-family: var(--mono), monospace; padding: 4px 12px; border-radius: 999px; font-size: 11px;
   letter-spacing: .05em; text-transform: uppercase; border: 1px solid; transition: all .4s;
   font-weight: 600;
 }
-.pill.draft { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
+.pill.draft { color: var(--warning); border-color: var(--warning); background: var(--warning-soft); }
 .pill.final { color: var(--provenance-patient-fg); border-color: var(--provenance-patient-fg); background: var(--provenance-patient-bg); }
 
 .disc {
   padding: 14px 16px; border-radius: 4px; background: var(--surface-sunken);
-  font-size: 14px; color: var(--ink-2); line-height: 1.6;
+  font-size: 14px; color: var(--ink-secondary); line-height: 1.6;
 }
-.disc code { font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); background: var(--surface); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line-soft); }
+.disc code { font-family: var(--mono), monospace; font-size: 12.5px; color: var(--ink-muted); background: var(--surface); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); }
 
-.muted { color: var(--ink-3); }
-.mono  { font-family: var(--mono); }
+.muted { color: var(--ink-muted); }
+.mono  { font-family: var(--mono), monospace; }
 
 /* Ensure safe wrapping of long technical identifiers */
 .overflow-anywhere {

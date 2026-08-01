@@ -24,7 +24,7 @@ export default function Home() {
     visible: {
       opacity: 1,
       y: 0,
-      transition: { type: "spring", stiffness: 100, damping: 20 },
+      transition: { duration: 0.24, ease: [0.2, 0.8, 0.2, 1] },
     },
   };
 

@@ -411,28 +411,11 @@ export default function PatientPage() {
             </option>
           ))}
         </select>
-        <span className={`chip ${mode === "deepgram" || mode === "gemini" ? "live" : "sim"}`}>
-          {mode === "deepgram"
-            ? `Deepgram nova-3-medical · ${liveState}`
-            : mode === "gemini"
-              ? `Gemini Live · ${liveState}`
-              : mode === "browser"
-                ? "browser mic"
-                : "scripted"}
-        </span>
-        {dgLatency?.total != null && (
-          <span className="chip live" title="Measured on the wire by Deepgram, not estimated">
-            {Math.round(dgLatency.total)} ms turn
-            {dgLatency.stt != null && ` · stt ${Math.round(dgLatency.stt)}`}
-            {dgLatency.tts != null && ` · tts ${Math.round(dgLatency.tts)}`}
-          </span>
-        )}
-        <span className="chip sim">synthetic</span>
       </div>
 
       {/* ---------- consent gate ---------- */}
       {!consented ? (
-        <motion.section variants={cardVariants} initial="hidden" animate="visible" className="card">
+        <motion.section variants={cardVariants} initial={false} animate="visible" className="card">
           <header><h2>{t(locale, "consentTitle")}</h2></header>
           <div className="body">
             <p style={{ marginTop: 0, fontSize: 15 }}>{t(locale, "consentBody")}</p>
@@ -456,7 +439,7 @@ export default function PatientPage() {
           </div>
         </motion.section>
       ) : (
-        <motion.div initial="hidden" animate="visible" variants={{ visible: { transition: { staggerChildren: 0.1 } } }}>
+        <motion.div initial={false} animate="visible" variants={{ visible: { transition: { staggerChildren: 0.1 } } }}>
           <motion.section variants={cardVariants} className="card" style={{ marginBottom: 14 }}>
             <header>
               {(micLive || liveState === "live") && (
@@ -475,7 +458,7 @@ export default function PatientPage() {
                 {turns.map((turn, i) => (
                   <motion.div 
                     key={i} 
-                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    initial={false}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     style={{ display: "flex", flexDirection: "column", alignItems: turn.who === "patient" ? "flex-end" : "flex-start", gap: 3 }}
                   >
@@ -499,7 +482,7 @@ export default function PatientPage() {
                 ))}
               </AnimatePresence>
               {partial && (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ alignSelf: "flex-end", padding: "10px 14px", borderRadius: 14, borderBottomRightRadius: 4, background: "var(--surface-2)", opacity: 0.7, fontSize: 14.5 }}>
+                <motion.div initial={false} animate={{ opacity: 1 }} style={{ alignSelf: "flex-end", padding: "10px 14px", borderRadius: 14, borderBottomRightRadius: 4, background: "var(--surface-2)", opacity: 0.7, fontSize: 14.5 }}>
                   <motion.span animate={{ opacity: [0, 1, 0] }} transition={{ repeat: Infinity, duration: 1.5 }}>...</motion.span> {partial}
                 </motion.div>
               )}
@@ -566,9 +549,6 @@ export default function PatientPage() {
             <motion.section variants={cardVariants} className="card" style={{ marginBottom: 14 }}>
               <header>
                 <h2>{t(locale, "labelCoverage")}</h2>
-                <span className={`chip ${map.benefits.simulated ? "sim" : "live"}`} style={{ marginInlineStart: "auto" }}>
-                  {map.benefits.simulated ? "fixture" : "live 270/271"}
-                </span>
               </header>
               <BenefitsCard b={map.benefits} />
             </motion.section>
@@ -582,11 +562,35 @@ export default function PatientPage() {
             <div className="disc" style={{ margin: 14 }}>{t(locale, "labelDraft")}</div>
           </motion.section>
 
-          <details style={{ marginTop: 24, padding: "14px", border: "1px dashed var(--line)", borderRadius: "var(--r)", background: "var(--surface-2)" }}>
-            <summary className="mono" style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: "var(--ink-2)", outline: "none" }}>
-              Demo Controls & Developer Diagnostics
+          <details style={{ marginTop: 24, padding: "14px", border: "1px dashed var(--line)", borderRadius: "var(--r)", background: "var(--surface-sunken)" }}>
+            <summary className="mono" style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: "var(--ink-secondary)", outline: "none" }}>
+              Demo evidence
             </summary>
             <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <span className={`chip ${mode === "deepgram" || mode === "gemini" ? "live" : "sim"}`}>
+                  {mode === "deepgram"
+                    ? `Deepgram nova-3-medical · ${liveState}`
+                    : mode === "gemini"
+                      ? `Gemini Live · ${liveState}`
+                      : mode === "browser"
+                        ? "browser mic"
+                        : "scripted"}
+                </span>
+                {dgLatency?.total != null && (
+                  <span className="chip live" title="Measured on the wire by Deepgram, not estimated">
+                    {Math.round(dgLatency.total)} ms turn
+                    {dgLatency.stt != null && ` · stt ${Math.round(dgLatency.stt)}`}
+                    {dgLatency.tts != null && ` · tts ${Math.round(dgLatency.tts)}`}
+                  </span>
+                )}
+                <span className="chip sim">synthetic intake</span>
+                {map.benefits && (
+                  <span className={`chip ${map.benefits.simulated ? "sim" : "live"}`}>
+                    benefits: {map.benefits.simulated ? "fixture" : "live 270/271"}
+                  </span>
+                )}
+              </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button className="btn big" onClick={nextScripted} disabled={busy || scriptIdx >= MARIA_SCRIPT.length} style={{ flex: 1 }}>
                   <Play size={16} />

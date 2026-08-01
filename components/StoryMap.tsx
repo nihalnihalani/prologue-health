@@ -61,7 +61,7 @@ export function Timeline({ model, audience }: { model: TimelineModel; audience: 
             <div style={{ position: "relative", height: 26, display: "flex", alignItems: "center" }}>
               {w && (
                 <motion.div
-                  initial={{ opacity: 0, scaleX: 0 }}
+                  initial={false}
                   animate={{ opacity: 1, scaleX: 1 }}
                   transition={{ delay: 0.2, duration: 0.5, ease: "easeOut" }}
                   style={{
@@ -220,10 +220,10 @@ export function ItemRow({
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: -10 }}
+      initial={false}
       animate={{ opacity: item.status === "rejected" ? 0.4 : 1, x: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      transition={{ type: "spring", stiffness: 100, damping: 15 }}
+      transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
       style={{
         display: "flex",
         gap: 12,
@@ -335,7 +335,7 @@ export function Reconciliation({ rows }: { rows: ReconRow[] }) {
       {rows.map((r, i) => (
         <motion.div
           key={r.drug}
-          initial={{ opacity: 0, y: 5 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: i * 0.05 }}
           style={{
@@ -390,7 +390,7 @@ export function BenefitsCard({ b }: { b: Benefits }) {
         {b.copays.map((c, i) => (
           <motion.div 
             key={c.placeOfService} 
-            initial={{ opacity: 0, scale: 0.95 }}
+            initial={false}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: i * 0.1, duration: 0.3 }}
             style={{ border: "1px solid var(--line)", borderRadius: "var(--r)", padding: 14, background: "var(--surface)" }}
@@ -404,7 +404,7 @@ export function BenefitsCard({ b }: { b: Benefits }) {
         ))}
         {b.coinsurancePercent != null && (
           <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
+            initial={false}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: b.copays.length * 0.1, duration: 0.3 }}
             style={{ border: "1px solid var(--line)", borderRadius: "var(--r)", padding: 14, background: "var(--surface)" }}
@@ -486,7 +486,7 @@ export function EscalationCard({ map, audience }: { map: StoryMap; audience: Aud
   if (!e) return null;
   return (
     <motion.div
-      initial={{ scale: 0.95, opacity: 0 }}
+      initial={false}
       animate={{ scale: 1, opacity: 1 }}
       style={{
         display: "flex",
@@ -498,22 +498,20 @@ export function EscalationCard({ map, audience }: { map: StoryMap; audience: Aud
         boxShadow: "0 10px 15px -3px rgba(220, 38, 38, 0.1), 0 4px 6px -4px rgba(220, 38, 38, 0.1)",
       }}
     >
-      <motion.div
-        animate={{ scale: [1, 1.15, 1] }}
-        transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-        style={{ display: "flex", alignItems: "center", justifyContent: "center", color: "var(--crit)" }}
+      <div
+        style={{ display: "flex", alignItems: "center", justifyContent: "center", color: "var(--critical)" }}
       >
         <AlertTriangle size={24} />
-      </motion.div>
+      </div>
       <div>
         <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5 }}>
           <strong style={{ color: "var(--crit)" }}>
-            {audience === "patient" ? "We've asked the office to call you today." : "Escalated to clinic — see today."}
+            {audience === "patient" ? "Flag queued for clinic review." : "Escalated to clinic."}
           </strong>{" "}
           {audience === "patient" ? e.patientMessage : e.clinicMessage}
         </p>
         <span className="mono" style={{ display: "block", marginTop: 6, fontSize: 11, color: "var(--ink-3)", fontWeight: 500 }}>
-          {audience === "clinician" ? `deterministic rule: ${e.ruleId} · severity ${e.severity}` : "A nurse will call you."}
+          {audience === "clinician" ? `deterministic rule: ${e.ruleId} · severity ${e.severity}` : "Flag queued for clinic review."}
         </span>
       </div>
     </motion.div>
