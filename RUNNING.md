@@ -26,6 +26,8 @@ independent — Stedi alone will make coverage live while the chart stays fixtur
 |---|---|
 | `MEDPLUM_CLIENT_ID` + `MEDPLUM_CLIENT_SECRET` | Chart reads hit a real Medplum project; drafts are written as real FHIR |
 | `STEDI_API_KEY` | Coverage runs a real X12 270/271; the badge flips `FIXTURE` → `LIVE 270/271` |
+| `PROLOGUE_MODE` | `demo` (default) permits labeled fixtures. **`pilot` refuses to substitute synthetic clinical or payer data** and surfaces the failure instead |
+| `PROLOGUE_CLINICIAN_SECRET` | Required in pilot mode. A browser alone cannot finalize clinical data |
 | `DEEPGRAM_API_KEY` | **Deepgram Voice Agent becomes the English path** — `nova-3-medical` + keyterm prompting over the patient's own drug list |
 | `GEMINI_API_KEY` | **Gemini Live becomes the non-English path** — native audio detects and switches language automatically |
 
@@ -128,28 +130,41 @@ Every screen says which. Nothing is implied.
 
 ## Safety invariants
 
-Two are enforced in code and covered by tests:
+Enforced in code and covered by tests in `tests/intake.test.ts` unless noted:
 
 ```
-writeDraft() refuses any resource with status "final" or "completed"
-  → tests/clinical.test.ts  "SAFETY: writeDraft refuses a final status"
-
-Composition.status reaches "final" only via the approval handler
-  → tests/session.test.ts   "SAFETY: composition is preliminary until approve()"
+writeDraft() refuses status "final" or "completed"        tests/clinical.test.ts
+Clinical finality is server-side only — a client-supplied compositionStatus,
+  approvedBy or approvedAt is discarded on ingest
+The clinician is authorised against a roster before any write; pilot mode
+  additionally requires PROLOGUE_CLINICIAN_SECRET
+Rejected item ids are validated against the canonical server item set
+Approval is idempotent — replay returns the original signature
+A signed session is terminal; later client writes are ignored, not applied
+Drafts never include a Condition — only a clinician may assert one
+Pilot mode refuses to sign against a fixture and leaves the session unsigned
+Day-of-therapy is calendar-based, so a clinical interval cannot shift with
+  the time of day
 ```
 
-A third is covered behaviourally: no red-flag `patientMessage` may contain a
-condition name — asserted against a forbidden-terms regex across every rule.
+Also covered behaviourally: no red-flag `patientMessage` may contain a condition
+name, asserted against a forbidden-terms regex across every rule and locale.
 
 ## Known limitations
 
 - **Not HIPAA compliant, and we don't claim to be.** Synthetic data only.
-- The session store is an **in-process Map**. It crosses devices against a single
-  server instance and survives reloads, but not a restart, and not multiple
-  serverless instances. The real answer is to persist the story map into Medplum
-  itself — it is already FHIR-shaped — which is the documented next step rather
-  than something claimed as done. `localStorage` remains a same-browser fallback
-  if the server write fails.
+- The session store is an **in-process Map**. It is now patient-keyed, holds an
+  explicit lifecycle, and is the canonical source the approval transaction
+  reloads — but it still does not survive a restart or span multiple serverless
+  instances. Durable persistence is Phase 2; the store interface is narrow so
+  swapping the backend will not touch the transaction logic.
+- **Identity is a static roster**, not real authentication. It exists so that
+  finalization has a server-side authorisation gate at all and so the attester
+  recorded on the `Provenance` comes from the server rather than a client
+  display string. SSO/RBAC is Phase 3 and is required before real PHI.
+- **The durable FHIR write is unverified against a live Medplum project.** With
+  no credentials the transaction runs, labels itself `origin: "fixture"`, warns
+  that the record is not live, and (in pilot mode) refuses outright.
 - **Clinician-facing translation is not implemented.** When a patient speaks
   Spanish, the clinician sees the original Spanish tagged `original · es-US`,
   not an English rendering. Showing a machine translation *as* the clinical

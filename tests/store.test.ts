@@ -1,66 +1,70 @@
 /**
- * Session store — the thing that lets the patient be on a phone and the
- * clinician on a laptop.
+ * Session store — patient-keyed, lifecycle-aware, and the thing that lets the
+ * patient be on a phone while the clinician is on a laptop.
  */
 
 import { test, beforeEach } from "vitest";
 import assert from "node:assert/strict";
-import { putSession, getSession, latestSession, listSessions } from "../lib/store";
+import { upsertFromMap, getSession, latestSession, listSessions, __clear } from "../lib/store";
 import { PrologueSession } from "../lib/session";
 import { chartSlice } from "../lib/fixtures";
+
+beforeEach(() => __clear());
 
 function make(id: string, locale: "en" | "es" = "en") {
   const s = new PrologueSession(id, locale);
   s.attachChart(chartSlice(), 1, true);
+  s.grantConsent();
   return s;
 }
 
 test("a session round-trips across devices", () => {
   const s = make("cross-device");
   s.patientSaid("rash on both arms, about four days", 60);
-  putSession(s.map);
+  upsertFromMap(s.map, { patientId: "maria-delgado-synthetic" });
 
   const fetched = getSession("cross-device");
   assert.ok(fetched, "clinician on another device must be able to load it");
-  assert.equal(fetched!.sessionId, "cross-device");
-  assert.ok(fetched!.items.length > 0);
-  assert.ok(fetched!.timeline, "the timeline must survive serialisation");
+  assert.equal(fetched!.map.sessionId, "cross-device");
+  assert.ok(fetched!.map.items.length > 0);
+  assert.ok(fetched!.map.timeline, "the timeline must survive serialisation");
+  assert.equal(fetched!.patientId, "maria-delgado-synthetic");
 });
 
 test("latest returns the most recently updated session", () => {
-  putSession(make("older").map);
+  upsertFromMap(make("older").map, { patientId: "p" });
   const newer = make("newer");
   newer.patientSaid("rash, four days", 60);
-  putSession(newer.map);
-
-  assert.equal(latestSession()?.map.sessionId, "newer");
+  upsertFromMap(newer.map, { patientId: "p" });
+  assert.equal(latestSession()?.id, "newer");
 });
 
-test("the queue lists sessions newest first with escalation state", () => {
+test("the queue exposes escalation state and lifecycle", () => {
   const esc = make("escalated");
   esc.patientSaid("my mouth is sore", 90);
-  putSession(esc.map);
+  upsertFromMap(esc.map, { patientId: "p" });
 
-  const list = listSessions();
-  assert.ok(list.length > 0);
-  const found = list.find((x) => x.id === "escalated")!;
+  const found = listSessions().find((x) => x.id === "escalated")!;
   assert.ok(found.map.escalation, "escalation must be visible to the queue");
+  assert.equal(found.state, "ready_for_review");
 });
 
-test("locale survives the round trip so the clinician sees the source language", () => {
+test("locale survives so the clinician sees the source language", () => {
   const s = make("spanish", "es");
   s.patientSaid("sarpullido, hace 4 days", 60);
-  putSession(s.map);
+  upsertFromMap(s.map, { patientId: "p" });
 
   const back = getSession("spanish")!;
   assert.equal(back.locale, "es");
-  const said = back.items.find((i) => i.source === "PATIENT")!;
+  const said = back.map.items.find((i) => i.source === "PATIENT")!;
   assert.equal(said.lang, "es-US", "clinician must know which language was spoken");
 });
 
-test("SAFETY: a stored session is still preliminary until signed", () => {
+test("SAFETY: a stored session is preliminary until the server signs it", () => {
   const s = make("unsigned");
   s.patientSaid("rash, four days", 60);
-  putSession(s.map);
-  assert.equal(getSession("unsigned")!.compositionStatus, "preliminary");
+  upsertFromMap(s.map, { patientId: "p" });
+  const stored = getSession("unsigned")!;
+  assert.equal(stored.map.compositionStatus, "preliminary");
+  assert.notEqual(stored.state, "signed");
 });

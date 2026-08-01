@@ -15,24 +15,39 @@ export default function ClinicianPage() {
   const [playing, setPlaying] = useState<string | null>(null);
 
   const [source, setSource] = useState<"server" | "local" | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [state, setState] = useState<string | null>(null);
+  const [mode, setMode] = useState<string>("demo");
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [signErr, setSignErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    // Server first so the clinician can be on a different device entirely.
+    // Server is authoritative. localStorage is a same-browser fallback only, and
+    // is never allowed to declare finality.
     try {
       const res = await fetch("/api/session");
       if (res.ok) {
-        const j = (await res.json()) as { map: StoryMap | null };
+        const j = (await res.json()) as {
+          map: StoryMap | null;
+          mode?: string;
+          session?: { id: string; state: string };
+        };
         if (j.map) {
-          setMap((prev) => (prev?.compositionStatus === "final" ? prev : j.map!));
+          setMap(j.map);
+          setSessionId(j.session?.id ?? j.map.sessionId);
+          setState(j.session?.state ?? null);
+          if (j.mode) setMode(j.mode);
           setSource("server");
           return;
         }
       }
-    } catch { /* fall through to localStorage */ }
+    } catch { /* fall through */ }
     try {
       const raw = localStorage.getItem(STORE_KEY);
       if (raw) {
-        setMap((prev) => (prev?.compositionStatus === "final" ? prev : (JSON.parse(raw) as StoryMap)));
+        const m = JSON.parse(raw) as StoryMap;
+        setMap(m);
+        setSessionId(m.sessionId);
         setSource("local");
       }
     } catch { /* ignore */ }
@@ -63,26 +78,41 @@ export default function ClinicianPage() {
     }
   };
 
+  /**
+   * Finalization is a server transaction. This function does NOT set a final
+   * status — it asks the server, and reloads whatever the server decided. If the
+   * server refuses, the UI shows the refusal rather than a success it did not
+   * earn.
+   */
   const sign = async () => {
-    if (!map) return;
+    if (!map || !sessionId) return;
     setSigning(true);
+    setSignErr(null);
     try {
       const res = await fetch("/api/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rejectedIds: rejected, approvedBy: "Dr. Amara Osei", summary: map.chiefConcern ?? "" }),
+        body: JSON.stringify({
+          sessionId,
+          clinicianId: "practitioner-osei",
+          clinicianSecret: process.env.NEXT_PUBLIC_CLINICIAN_SECRET,
+          rejectedIds: rejected,
+        }),
       });
       const j = await res.json();
-      const next: StoryMap = {
-        ...map,
-        compositionStatus: "final",
-        approvedAt: j.approvedAt,
-        approvedBy: j.approvedBy,
-        items: map.items.map((i) => ({ ...i, status: rejected.includes(i.id) ? "rejected" : "approved" })),
-      };
-      setMap(next);
-      localStorage.setItem(STORE_KEY, JSON.stringify(next));
-      setSigned({ at: j.approvedAt, by: j.approvedBy });
+
+      if (!res.ok) {
+        setSignErr(j.error ?? `finalization refused (${res.status})`);
+        return;
+      }
+
+      setWarnings(j.warnings ?? []);
+      setSigned({ at: j.signature.at, by: j.signature.by });
+      setState(j.state);
+      // Reload canonical state rather than constructing a final map locally.
+      await load();
+    } catch (err) {
+      setSignErr((err as Error).message);
     } finally {
       setSigning(false);
     }
@@ -114,7 +144,9 @@ export default function ClinicianPage() {
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span className={`pill ${isFinal ? "final" : "draft"}`}>{isFinal ? "final" : "preliminary"}</span>
-          {source && <span className="chip">{source === "server" ? "live session" : "local only"}</span>}
+          {source && <span className="chip">{source === "server" ? "server session" : "local only"}</span>}
+          {state && <span className="chip">{state.replace(/_/g, " ")}</span>}
+          <span className={`chip ${mode === "pilot" ? "live" : "sim"}`}>{mode}</span>
           <Link href="/patient" className="chip" style={{ textDecoration: "none" }}>← Patient view</Link>
         </div>
       </header>
@@ -195,11 +227,25 @@ export default function ClinicianPage() {
         <div className="mono" style={{ fontSize: 11.5 }}>
           <span className="muted">Composition.status</span>{" "}
           <span className={`pill ${isFinal ? "final" : "draft"}`}>{isFinal ? "final" : "preliminary"}</span>
-          {source && <span className="chip">{source === "server" ? "live session" : "local only"}</span>}
+          {source && <span className="chip">{source === "server" ? "server session" : "local only"}</span>}
+          {state && <span className="chip">{state.replace(/_/g, " ")}</span>}
+          <span className={`chip ${mode === "pilot" ? "live" : "sim"}`}>{mode}</span>
         </div>
         <div className="mono muted" style={{ fontSize: 11.5 }}>
-          {signed ? `signed by ${signed.by} · Provenance + AuditEvent written` : `${rejected.length} rejected — nothing has entered the chart`}
+          {signed
+            ? `signed by ${signed.by} · Provenance + AuditEvent written`
+            : `${rejected.length} rejected — nothing has entered the chart`}
         </div>
+        {signErr && (
+          <div className="mono" style={{ fontSize: 11.5, color: "var(--crit)", flexBasis: "100%" }}>
+            ✕ {signErr}
+          </div>
+        )}
+        {warnings.map((w) => (
+          <div key={w} className="mono" style={{ fontSize: 11, color: "var(--warn)", flexBasis: "100%" }}>
+            ⚠ {w}
+          </div>
+        ))}
         <button className="btn primary big" style={{ marginLeft: "auto" }} onClick={sign} disabled={signing || isFinal}>
           {isFinal ? "Signed ✓" : signing ? "Signing…" : "Approve & sign"}
         </button>
