@@ -20,6 +20,7 @@ import {
 } from "./types";
 import { checkRedFlags, correlate, buildTimeline } from "./clinical";
 import type { ChartSlice } from "./fixtures";
+import { t, type Locale } from "./i18n";
 
 let seq = 0;
 const uid = (p: string) => `${p}-${++seq}`;
@@ -39,13 +40,22 @@ export class PrologueSession {
   private transcript = "";
   private asked = new Set<string>();
 
-  constructor(sessionId: string) {
+  readonly locale: Locale;
+
+  constructor(sessionId: string, locale: Locale = "en") {
+    this.locale = locale;
     this.map = emptyStoryMap(sessionId, {
       id: "maria-delgado-synthetic",
       name: "Maria Delgado",
       age: 34,
       appointment: { when: "Thursday", reason: "itchy rash on arms and chest", clinician: "Dr. Amara Osei" },
-    });
+    }, locale);
+    this.map.consent.text = t(locale, "consentBody");
+  }
+
+  /** The agent's opening line, in the patient's language. */
+  opening(): string {
+    return t(this.locale, "opening");
   }
 
   private record(c: Omit<ToolCall, "id" | "at">) {
@@ -113,7 +123,7 @@ export class PrologueSession {
         fhir: "DetectedIssue (preliminary)",
       });
       return {
-        agentSays: flag.patientMessage,
+        agentSays: flag.patientKey ? t(this.locale, flag.patientKey) : flag.patientMessage,
         calls: this.map.calls.slice(callsBefore),
         escalated: true,
       };
@@ -202,25 +212,21 @@ export class PrologueSession {
       fhir: "DetectedIssue (preliminary)",
     });
 
-    return (
-      `That helps. One thing I want to check — and it may be nothing. Your record shows you ` +
-      `started ${hitMed.name} about ${Math.round(hitMed.startedDaysAgo / 7)} weeks ago. Is that right?`
-    );
+    return t(this.locale, "askDrugTiming", {
+      drug: hitMed.name,
+      weeks: Math.round(hitMed.startedDaysAgo / 7),
+    });
   }
 
   private nextGenericQuestion(): string {
-    const order = [
-      ["distribution", "Where exactly is it — and has it spread since it started?"],
-      ["quality", "Is it itchy, painful, or neither?"],
-      ["assoc", "Have you noticed anything else at all — even something that seems unrelated?"],
-    ] as const;
-    for (const [k, q] of order) {
-      if (!this.asked.has(k)) {
-        this.asked.add(k);
-        return q;
+    const order = ["askDistribution", "askQuality", "askAssociated"] as const;
+    for (const key of order) {
+      if (!this.asked.has(key)) {
+        this.asked.add(key);
+        return t(this.locale, key);
       }
     }
-    return "Thanks — that's helpful.";
+    return t(this.locale, "doorknob");
   }
 
   /** Confirm the drug the agent asked about. Records the patient's confirmation. */
@@ -312,9 +318,10 @@ export class PrologueSession {
         b.copays.map((c) => `${c.placeOfService} copay $${c.amount}`).join("; ") +
         (b.coinsurancePercent ? `; ${b.coinsurancePercent}% coinsurance` : "") +
         (b.deductibleRemaining ? `; $${b.deductibleRemaining} deductible remaining` : ""),
-      patientText:
-        `Your ${b.planName} is active. You've got about $${b.deductibleRemaining} left on your deductible. ` +
-        `The office can give you an exact estimate — I can't promise a final number.`,
+      patientText: t(this.locale, "benefits", {
+        plan: b.planName,
+        remaining: b.deductibleRemaining ?? 0,
+      }),
       fhir: "CoverageEligibilityResponse",
     });
   }
