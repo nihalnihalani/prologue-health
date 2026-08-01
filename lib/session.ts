@@ -20,7 +20,7 @@ import {
 } from "./types";
 import { checkRedFlags, correlate, buildTimeline } from "./clinical";
 import type { ChartSlice } from "./fixtures";
-import { t, type Locale } from "./i18n";
+import { t, LOCALES, type Locale } from "./i18n";
 
 let seq = 0;
 const uid = (p: string) => `${p}-${++seq}`;
@@ -97,6 +97,7 @@ export class PrologueSession {
       text,
       patientText: text,
       verbatim: text,
+      lang: LOCALES[this.locale].bcp47,
       atSeconds,
       fhir: "Observation (preliminary)",
     });
@@ -293,7 +294,14 @@ export class PrologueSession {
   }
 
   addDoorknob(text: string, atSeconds: number) {
-    this.addItem({ source: "PATIENT", text, patientText: text, verbatim: text, atSeconds });
+    this.addItem({
+      source: "PATIENT",
+      text,
+      patientText: text,
+      verbatim: text,
+      lang: LOCALES[this.locale].bcp47,
+      atSeconds,
+    });
     this.map.openQuestions.unshift({
       id: uid("q"),
       kind: "doorknob",

@@ -14,18 +14,35 @@ export default function ClinicianPage() {
   const [signed, setSigned] = useState<{ at: string; by: string } | null>(null);
   const [playing, setPlaying] = useState<string | null>(null);
 
-  const load = useCallback(() => {
+  const [source, setSource] = useState<"server" | "local" | null>(null);
+
+  const load = useCallback(async () => {
+    // Server first so the clinician can be on a different device entirely.
+    try {
+      const res = await fetch("/api/session");
+      if (res.ok) {
+        const j = (await res.json()) as { map: StoryMap | null };
+        if (j.map) {
+          setMap((prev) => (prev?.compositionStatus === "final" ? prev : j.map!));
+          setSource("server");
+          return;
+        }
+      }
+    } catch { /* fall through to localStorage */ }
     try {
       const raw = localStorage.getItem(STORE_KEY);
-      if (raw) setMap(JSON.parse(raw) as StoryMap);
+      if (raw) {
+        setMap((prev) => (prev?.compositionStatus === "final" ? prev : (JSON.parse(raw) as StoryMap)));
+        setSource("local");
+      }
     } catch { /* ignore */ }
   }, []);
 
   useEffect(() => {
-    load();
-    const onStorage = (e: StorageEvent) => { if (e.key === STORE_KEY) load(); };
+    void load();
+    const onStorage = (e: StorageEvent) => { if (e.key === STORE_KEY) void load(); };
     window.addEventListener("storage", onStorage);
-    const t = setInterval(load, 1500); // same-tab updates don't fire storage events
+    const t = setInterval(() => void load(), 1500);
     return () => { window.removeEventListener("storage", onStorage); clearInterval(t); };
   }, [load]);
 
@@ -97,6 +114,7 @@ export default function ClinicianPage() {
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span className={`pill ${isFinal ? "final" : "draft"}`}>{isFinal ? "final" : "preliminary"}</span>
+          {source && <span className="chip">{source === "server" ? "live session" : "local only"}</span>}
           <Link href="/patient" className="chip" style={{ textDecoration: "none" }}>← Patient view</Link>
         </div>
       </header>
@@ -177,6 +195,7 @@ export default function ClinicianPage() {
         <div className="mono" style={{ fontSize: 11.5 }}>
           <span className="muted">Composition.status</span>{" "}
           <span className={`pill ${isFinal ? "final" : "draft"}`}>{isFinal ? "final" : "preliminary"}</span>
+          {source && <span className="chip">{source === "server" ? "live session" : "local only"}</span>}
         </div>
         <div className="mono muted" style={{ fontSize: 11.5 }}>
           {signed ? `signed by ${signed.by} · Provenance + AuditEvent written` : `${rejected.length} rejected — nothing has entered the chart`}

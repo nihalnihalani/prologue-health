@@ -28,6 +28,8 @@ export interface StoryItem {
   atSeconds?: number;
   /** Verbatim transcript for PATIENT items — what they actually said. */
   verbatim?: string;
+  /** BCP-47 tag of the language the patient actually spoke. Clinician-visible. */
+  lang?: string;
   /** For INFERRED items: the deterministic rule that fired. Required. */
   rule?: string;
   /** For INFERRED items: a resolvable source. Required — uncited inference is never promoted. */
