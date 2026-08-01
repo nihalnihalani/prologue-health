@@ -1,47 +1,64 @@
 :root {
-  --bg: #F8FAFC;
-  --surface: #FFFFFF;
-  --surface-2: #F1F5F9;
-  --line: #E2E8F0;
-  --line-soft: #F1F5F9;
-  --ink: #0F172A;
-  --ink-2: #334155;
-  --ink-3: #64748B;
-  --accent: #0F766E; /* Teal 700 */
-  --accent-2: #CCFBF1; /* Teal 100 */
-  --warn: #D97706; /* Amber 600 */
-  --warn-bg: #FEF3C7; /* Amber 100 */
-  --crit: #DC2626; /* Red 600 */
-  --crit-bg: #FEE2E2; /* Red 100 */
-  --record: #2563EB; /* Blue 600 */
-  --infer: #7C3AED; /* Violet 600 */
-  --money: #CA8A04; /* Yellow 600 */
+  --bg: #F3F0E8; /* Warm page background (canvas) */
+  --surface: #FFFDF8; /* Primary casefile surface */
+  --surface-raised: #FFFFFF; /* Menus, dialogs, signing dock */
+  --surface-sunken: #E9EDE8; /* Inputs, secondary strips, inactive rows */
+  --ink: #18211D; /* Primary text */
+  --ink-2: #44504A; /* Supporting text (ink-secondary) */
+  --ink-3: #626E68; /* Metadata (ink-muted) */
+  --line: #C9D0CA; /* Default rules and panel boundaries */
+  --line-soft: #E9EDE8; /* Soft rules */
+  --line-strong: #98A49E; /* Inputs, dividers, selected outlines */
+  --accent: #1F526B; /* Primary action / links (action) */
+  --accent-2: #DCE9ED; /* Selected/secondary action surface (action-soft) */
+  --action-hover: #163E52; /* Primary hover/pressed */
+  --focus: #007C89; /* Keyboard focus ring */
+  --focus-soft: #B7DCE1; /* Outer focus halo */
+  
+  --crit: #A4372A; /* Confirmed urgent/failed state only (critical) */
+  --crit-bg: #F5DFDB; /* Critical surface (critical-soft) */
+  --warn: #8C5C0A; /* Incomplete, unknown, attention (warning) */
+  --warn-bg: #F5E8C8; /* Warning surface (warning-soft) */
+  
+  /* Provenance colors */
+  --provenance-patient-fg: #0B6B66;
+  --provenance-patient-bg: #DCEDEA;
+  --provenance-record-fg: #365E8D;
+  --provenance-record-bg: #E0E8F1;
+  --provenance-inference-fg: #78551F;
+  --provenance-inference-bg: #F1E7D2;
+  --provenance-insurance-fg: #6F5C27;
+  --provenance-insurance-bg: #EFE9D7;
+  --provenance-clinician-fg: #674478;
+  --provenance-clinician-bg: #EDE4F0;
 
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", sans-serif;
-  --r: 12px;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", sans-serif;
+  --serif: "Literata", Georgia, serif;
+  --r: 8px;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #020617;
-    --surface: #0F172A;
-    --surface-2: #1E293B;
-    --line: #334155;
-    --line-soft: #1E293B;
-    --ink: #F8FAFC;
-    --ink-2: #CBD5E1;
-    --ink-3: #94A3B8;
-    --accent: #2DD4BF; /* Teal 400 */
-    --accent-2: #115E59; /* Teal 800 */
-    --warn: #FBBF24; /* Amber 400 */
-    --warn-bg: #78350F; /* Amber 900 */
-    --crit: #F87171; /* Red 400 */
-    --crit-bg: #7F1D1D; /* Red 900 */
-    --record: #60A5FA;
-    --infer: #A78BFA;
-    --money: #FACC15;
+    --bg: #101512; /* Canvas */
+    --surface: #171D19; /* Primary casefile */
+    --surface-raised: #1D2520; /* Menus, signing dock */
+    --surface-sunken: #121714; /* Secondary strips */
+    --ink: #F5F2E9; /* Primary text */
+    --ink-2: #CDD4CD; /* Supporting text */
+    --ink-3: #98A39C; /* Metadata */
+    --line: #3B463F; /* Boundaries */
+    --line-soft: #1D2520;
+    --line-strong: #58655D; /* Dividers */
+    --accent: #8DC5D5; /* Primary action */
+    --accent-2: #203C45; /* Action soft */
+    --action-hover: #B5DAE3;
+    --focus: #7FD4DE;
+    --crit: #FF9584; /* Critical */
+    --crit-bg: #47231F; /* Critical soft */
+    --warn: #E4BB68; /* Warning */
+    --warn-bg: #40341F; /* Warning soft */
     color-scheme: dark;
   }
 }
@@ -58,16 +75,32 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-a { color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 4px; }
-a:hover { text-decoration-color: var(--accent); }
+a { color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 4px; transition: color 0.15s ease; }
+a:hover { color: var(--action-hover); }
+
+/* Provenance badge styling */
+.src-PATIENT { color: var(--provenance-patient-fg); }
+.src-RECORD { color: var(--provenance-record-fg); }
+.src-INFERRED { color: var(--provenance-inference-fg); }
+.src-INSURANCE { color: var(--provenance-insurance-fg); }
+.src-CLINICIAN { color: var(--provenance-clinician-fg); }
+
+.bg-PATIENT { background: var(--provenance-patient-fg); }
+.bg-RECORD { background: var(--provenance-record-fg); }
+.bg-INFERRED { background: var(--provenance-inference-fg); }
+.bg-INSURANCE { background: var(--provenance-insurance-fg); }
+.bg-CLINICIAN { background: var(--provenance-clinician-fg); }
 
 .chip {
   font-family: var(--mono); font-size: 11px; letter-spacing: .08em;
   text-transform: uppercase; padding: 4px 10px; border-radius: 999px;
   border: 1px solid var(--line); color: var(--ink-3); white-space: nowrap;
   font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
-.chip.live { color: var(--accent); border-color: var(--accent); background: var(--accent-2); }
+.chip.live { color: var(--provenance-patient-fg); border-color: var(--provenance-patient-fg); background: var(--provenance-patient-bg); }
 .chip.sim  { color: var(--warn);  border-color: var(--warn); background: var(--warn-bg); }
 
 .card {
@@ -80,7 +113,7 @@ a:hover { text-decoration-color: var(--accent); }
 .card > header {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 14px 18px; border-bottom: 1px solid var(--line-soft);
-  background: var(--surface-2);
+  background: var(--surface-sunken);
 }
 .card > header h2 {
   margin: 0; font-family: var(--sans); font-size: 14px; letter-spacing: .02em;
@@ -91,13 +124,13 @@ a:hover { text-decoration-color: var(--accent); }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   appearance: none; font-family: var(--sans); font-size: 13px; font-weight: 500;
-  padding: 10px 18px; border-radius: 8px;
+  padding: 10px 18px; border-radius: 4px; min-height: 40px;
   border: 1px solid var(--line); background: var(--surface); color: var(--ink-2);
   cursor: pointer; white-space: nowrap; transition: all .2s ease;
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 }
-.btn:hover:not(:disabled) { border-color: var(--ink-3); color: var(--ink); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
-.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn:hover:not(:disabled) { border-color: var(--line-strong); color: var(--ink); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+.btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn.primary { border-color: var(--accent); background: var(--accent); color: white; }
 .btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); color: var(--accent); }
@@ -108,7 +141,7 @@ a:hover { text-decoration-color: var(--accent); }
 
 .btn.danger { border-color: var(--crit); color: var(--crit); }
 .btn.danger:hover:not(:disabled) { background: var(--crit-bg); }
-.btn.big { font-size: 15px; padding: 14px 26px; }
+.btn.big { font-size: 15px; padding: 14px 26px; border-radius: 4px; }
 
 .pill {
   font-family: var(--mono); padding: 4px 12px; border-radius: 999px; font-size: 11px;
@@ -116,10 +149,10 @@ a:hover { text-decoration-color: var(--accent); }
   font-weight: 600;
 }
 .pill.draft { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
-.pill.final { color: var(--accent); border-color: var(--accent); background: var(--accent-2); }
+.pill.final { color: var(--provenance-patient-fg); border-color: var(--provenance-patient-fg); background: var(--provenance-patient-bg); }
 
 .disc {
-  padding: 14px 16px; border-radius: 8px; background: var(--surface-2);
+  padding: 14px 16px; border-radius: 4px; background: var(--surface-sunken);
   font-size: 14px; color: var(--ink-2); line-height: 1.6;
 }
 .disc code { font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); background: var(--surface); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line-soft); }
@@ -127,17 +160,57 @@ a:hover { text-decoration-color: var(--accent); }
 .muted { color: var(--ink-3); }
 .mono  { font-family: var(--mono); }
 
-.src-PATIENT { color: var(--accent); }
-.src-RECORD { color: var(--record); }
-.src-INFERRED { color: var(--infer); }
-.src-INSURANCE { color: var(--money); }
-.src-CLINICIAN { color: var(--accent); }
-.bg-PATIENT { background: var(--accent); }
-.bg-RECORD { background: var(--record); }
-.bg-INFERRED { background: var(--infer); }
-.bg-INSURANCE { background: var(--money); }
-.bg-CLINICIAN { background: var(--accent); }
+/* Ensure safe wrapping of long technical identifiers */
+.overflow-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+/* Accessibility skip link */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--accent);
+  color: white;
+  padding: 8px;
+  z-index: 100;
+  transition: top 0.2s;
+}
+.skip-link:focus {
+  top: 0;
+}
+
+/* Responsive clinical layouts */
+.clinician-grid {
+  display: grid;
+  grid-template-columns: 280px 1fr 360px;
+  gap: 20px;
+  margin-top: 20px;
+  align-items: start;
+}
+@media (max-width: 1150px) {
+  .clinician-grid {
+    grid-template-columns: 250px 1fr;
+  }
+  .clinician-right-rail {
+    grid-column: span 2;
+  }
+}
+@media (max-width: 900px) {
+  .clinician-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .clinician-right-rail {
+    grid-column: span 1 !important;
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
