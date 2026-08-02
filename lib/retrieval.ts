@@ -64,12 +64,29 @@ export interface RetrievalResult {
   unavailableReason?: string;
 }
 
+/**
+ * Mandatory query scope.
+ *
+ * Made required in the TYPE, not merely honoured at runtime: scope used to be
+ * optional and was applied only as a post-filter on whatever Moss returned, so
+ * a caller who simply omitted it got an unscoped cross-patient search and no
+ * error. There is now no way to express that call.
+ */
+export interface RetrievalScope {
+  tenant: string;
+  patient: string;
+  topK?: number;
+  /** Results below this similarity are dropped as "no relevant evidence". */
+  minScore?: number;
+}
+
 export interface RetrievalProvider {
   readonly name: string;
   readonly available: boolean;
   indexPatient(indexName: string, docs: RetrievalDoc[]): Promise<{ ok: boolean; indexVersion?: string; error?: string }>;
   warm(indexName: string): Promise<boolean>;
-  query(indexName: string, query: string, opts?: { topK?: number; tenant: string; patient: string }): Promise<RetrievalResult>;
+  /** Scope is REQUIRED — there is deliberately no callable unscoped query. */
+  query(indexName: string, query: string, scope: RetrievalScope): Promise<RetrievalResult>;
   deleteIndex(indexName: string): Promise<boolean>;
 }
 
@@ -162,12 +179,16 @@ export class MossRetrievalProvider implements RetrievalProvider {
     }
   }
 
-  async query(
-    indexName: string,
-    query: string,
-    opts?: { topK?: number; tenant: string; patient: string }
-  ): Promise<RetrievalResult> {
+  async query(indexName: string, query: string, scope: RetrievalScope): Promise<RetrievalResult> {
     const t0 = Date.now();
+
+    // Revalidate at runtime. The type stops honest callers; this stops a
+    // JavaScript caller, a bad cast, or a future refactor from slipping through.
+    if (!scope?.tenant || !scope?.patient) {
+      throw new RetrievalProhibitedError(
+        "tenant and patient scope are required for every retrieval query"
+      );
+    }
     if (!this.available) {
       // Unavailable is a RESULT, not an empty success. The caller must be able
       // to drop the retrieval claim rather than show a confident empty answer.
@@ -184,7 +205,7 @@ export class MossRetrievalProvider implements RetrievalProvider {
 
     try {
       const c = await this.getClient();
-      const res = await c.query(indexName, query, { topK: opts?.topK ?? 5 });
+      const res = await c.query(indexName, query, { topK: scope.topK ?? 5 });
       // Moss returns `docs` (SearchResult.docs), not `results`.
       const rows = (res?.docs ?? []) as {
         id?: string;
@@ -193,11 +214,15 @@ export class MossRetrievalProvider implements RetrievalProvider {
         metadata?: Record<string, string>;
       }[];
 
-      // Mandatory scope filter. Never trust the index alone to isolate patients.
+      // Mandatory scope filter. Never trust the index alone to isolate patients,
+      // and never treat a missing metadata field as "matches" — an unlabelled
+      // document belongs to no one and must not be returned to anyone.
+      const minScore = scope.minScore ?? 0;
       const scoped = rows.filter(
         (r) =>
-          (!opts?.tenant || r.metadata?.tenant === opts.tenant) &&
-          (!opts?.patient || r.metadata?.patient === opts.patient)
+          r.metadata?.tenant === scope.tenant &&
+          r.metadata?.patient === scope.patient &&
+          Number(r.score ?? 0) >= minScore
       );
 
       return {

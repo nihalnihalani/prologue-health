@@ -35,7 +35,6 @@ export async function POST(req: Request) {
     text?: string;
     locale?: string;
     atSeconds?: number;
-    chartSummary?: string;
     provider?: string;
     providerEventId?: string;
   };
@@ -63,21 +62,25 @@ export async function POST(req: Request) {
   const coverage = safetyCoverage(locale);
   const safetyMs = Date.now() - t0;
 
-  /* ---- 2. persist the turn and the rule outcome ---- */
+  /* ---- 2. resolve the session, then persist the turn and rule outcome ---- */
   let turnId: string | null = null;
   let duplicate = false;
   let persistError: string | undefined;
+  let tenantId: string | null = null;
+  let dbSessionId: string | null = null;
+  let patientRef: string | null = null;
 
   if (databaseConfigured) {
     try {
-      const tenantId = await resolveTenantId();
+      tenantId = await resolveTenantId();
       const pool = (await import("@/lib/db/client")).getPool();
       const found = await pool.query(
-        "SELECT id FROM intake_sessions WHERE tenant_id = $1 AND external_id = $2",
+        "SELECT id, patient_ref FROM intake_sessions WHERE tenant_id = $1 AND external_id = $2",
         [tenantId, sessionId]
       );
       if (found.rows[0]) {
-        const dbSessionId = found.rows[0].id as string;
+        dbSessionId = found.rows[0].id as string;
+        patientRef = found.rows[0].patient_ref as string;
         const appended = await repo.appendTurn({
           tenantId,
           sessionId: dbSessionId,
@@ -115,33 +118,76 @@ export async function POST(req: Request) {
     }
   }
 
-  /* ---- 3. model extraction, strictly best-effort ---- */
-  let extraction: Awaited<ReturnType<typeof extractTurn>> | null = null;
-  if (llmConfigured && !duplicate) {
+  /*
+   * An UNKNOWN session gets no model call.
+   *
+   * Previously any caller could POST an arbitrary sessionId and have us run a
+   * paid LLM request for it — an unauthenticated cost-and-abuse channel, and a
+   * way to get model output for a session that was never consented to. Safety
+   * has already been evaluated and is still returned; what is refused is the
+   * spend and the generated content.
+   */
+  const sessionKnown = !databaseConfigured || Boolean(dbSessionId);
+  if (databaseConfigured && !dbSessionId && !persistError) {
+    return NextResponse.json(
+      {
+        error: "unknown session",
+        // The deterministic result still stands; it cost nothing and hiding it
+        // would be strictly worse for the caller.
+        safety: {
+          escalate: Boolean(flag),
+          ruleId: flag?.ruleId ?? null,
+          severity: flag?.severity ?? null,
+          covered: coverage.covered,
+          note: coverage.note ?? null,
+          ms: safetyMs,
+        },
+      },
+      { status: 404 }
+    );
+  }
+
+  /* ---- 3. chart context, derived SERVER-SIDE ---- */
+  /*
+   * The browser used to supply `chartSummary`, which meant an attacker could
+   * put arbitrary text into the model's context for a real session — a direct
+   * prompt-injection surface — and could assert chart facts the chart does not
+   * contain. Chart context is authorized data and must come from the chart.
+   */
+  let chartSummary = "";
+  if (patientRef) {
     try {
-      extraction = await extractTurn({
-        turnText: text,
-        chartSummary: body.chartSummary ?? "",
-      });
-    } catch (err) {
-      console.error("[turn] extraction threw:", (err as Error).message);
+      const { readChart } = await import("@/lib/medplum");
+      const chart = readChart(patientRef).data;
+      chartSummary = chart.medications
+        .map((m) => `${m.name}${m.startedDaysAgo ? ` (started ${m.startedDaysAgo} days ago)` : ""}`)
+        .join("; ");
+    } catch {
+      // No warmed chart is a legitimate state, not a reason to trust the client.
+      chartSummary = "";
     }
   }
 
-  /* ---- 4. persist candidates with provenance ---- */
-  let factsStored = 0;
-  if (extraction && extraction.facts.length && turnId && databaseConfigured) {
+  /* ---- 4. model extraction, strictly best-effort ---- */
+  let extraction: Awaited<ReturnType<typeof extractTurn>> | null = null;
+  let extractionError: string | undefined;
+  if (llmConfigured && !duplicate && sessionKnown) {
     try {
-      const tenantId = await resolveTenantId();
-      const pool = (await import("@/lib/db/client")).getPool();
-      const found = await pool.query(
-        "SELECT id FROM intake_sessions WHERE tenant_id = $1 AND external_id = $2",
-        [tenantId, sessionId]
-      );
-      if (found.rows[0]) {
+      extraction = await extractTurn({ turnText: text, chartSummary });
+    } catch (err) {
+      extractionError = (err as Error).message;
+      console.error("[turn] extraction threw:", extractionError);
+    }
+  }
+
+  /* ---- 5. persist candidates AND the call itself ---- */
+  let factsStored = 0;
+  if (tenantId && dbSessionId) {
+    try {
+      if (extraction && extraction.facts.length && turnId) {
         factsStored = await repo.recordExtractedFacts({
           tenantId,
-          sessionId: found.rows[0].id as string,
+          sessionId: dbSessionId,
           turnId,
           provider: extraction.provider,
           modelVersion: extraction.modelVersion,
@@ -156,16 +202,31 @@ export async function POST(req: Request) {
             uncertain: f.uncertain,
           })),
         });
+      }
 
+      /*
+       * Record the call whenever one was ATTEMPTED, not only when it produced
+       * facts. Logging only successes made abstentions, provider failures, and
+       * empty results invisible — so the durable history would have shown a
+       * model that never failed and never declined, which is the opposite of
+       * what an operator needs to see.
+       */
+      if (llmConfigured && !duplicate) {
         await repo.recordIntegrationCall({
           tenantId,
-          sessionId: found.rows[0].id as string,
+          sessionId: dbSessionId,
           provider: "gemini",
           operation: "extractTurn",
-          origin: "live",
-          ok: !extraction.abstained,
-          latencyMs: extraction.latencyMs,
-          traceId: extraction.traceId,
+          origin: extraction ? "live" : "failed",
+          ok: Boolean(extraction && !extraction.abstained),
+          latencyMs: extraction?.latencyMs,
+          traceId: extraction?.traceId,
+          errorClass: extractionError
+            ? "provider_error"
+            : extraction?.abstained
+              ? "abstained"
+              : undefined,
+          errorMessage: extractionError ?? extraction?.abstainReason,
         });
       }
     } catch (err) {

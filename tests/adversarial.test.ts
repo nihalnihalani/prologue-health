@@ -6,7 +6,7 @@
  * again.
  */
 
-import { test, afterEach } from "vitest";
+import { test, afterEach, vi } from "vitest";
 import assert from "node:assert/strict";
 
 import { checkRedFlags, safetyCoverage, isSuppressed, SAFETY_RULE_LOCALES } from "../lib/clinical";
@@ -234,8 +234,11 @@ test("M0: pilot mode refuses fixture eligibility on a FAILED request", async () 
   process.env.PROLOGUE_MODE = "pilot";
   process.env.STEDI_API_KEY = "test-key";
   process.env.STEDI_ELIGIBILITY_URL = "http://127.0.0.1:1/nope"; // guaranteed connection failure
-  // Re-import so the module reads the patched env.
-  const mod = await import(`../lib/stedi?bust=${Date.now()}`);
+  // Re-import so the module reads the patched env. vi.resetModules() is the
+  // supported way to do this; a `?bust=` query string is not a valid module
+  // specifier and made the bundler warn on every run.
+  vi.resetModules();
+  const mod = await import("../lib/stedi");
   await assert.rejects(
     () => mod.checkEligibility({ firstName: "M", lastName: "D", dateOfBirth: "19920314", memberId: "W1" }),
     /Stedi is unavailable/,
@@ -248,7 +251,8 @@ test("M0: pilot mode refuses fixture eligibility on a FAILED request", async () 
 test("M0: demo mode still degrades, but carries the failure detail", async () => {
   process.env.STEDI_API_KEY = "test-key";
   process.env.STEDI_ELIGIBILITY_URL = "http://127.0.0.1:1/nope";
-  const mod = await import(`../lib/stedi?bust2=${Date.now()}`);
+  vi.resetModules();
+  const mod = await import("../lib/stedi");
   const r = await mod.checkEligibility({ firstName: "M", lastName: "D", dateOfBirth: "19920314", memberId: "W1" });
   assert.equal(r.simulated, true, "a failed live call must be labelled simulated");
   assert.ok(r.detail, "the reason for degradation must be recorded");

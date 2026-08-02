@@ -9,7 +9,7 @@
 
 import { test, describe } from "vitest";
 import assert from "node:assert/strict";
-import { groundFacts, PROMPT_VERSION, DEFAULT_MODEL } from "../lib/llm";
+import { groundFacts, PROMPT_VERSION, DEFAULT_MODEL, EXTRACTED_FIELDS } from "../lib/llm";
 import {
   assertRetrievalAllowed,
   projectChartToDocs,
@@ -66,6 +66,45 @@ describe("LLM grounding contract", () => {
     assert.equal(facts[0].confidence, 1);
   });
 
+  test("WRONG SPAN: a fact whose claimed span points at unrelated words is repaired, not trusted", () => {
+    // The old behaviour accepted this outright because the value appeared
+    // somewhere in the utterance — so a clinician clicking through to "the words
+    // this came from" would have been shown the wrong words.
+    const { facts, rejected } = groundFacts(
+      // span 0-4 is "I've", which supports nothing.
+      [{ field: "symptom", value: "rash", span_start: 0, span_end: 4, confidence: 0.9, uncertain: false }],
+      turn
+    );
+    assert.equal(rejected, 0);
+    assert.equal(facts.length, 1);
+    assert.equal(
+      turn.slice(facts[0].spanStart, facts[0].spanEnd).toLowerCase(),
+      "rash",
+      "the stored span must actually contain the stored value"
+    );
+  });
+
+  test("an unknown field is rejected rather than cast through", () => {
+    // Casting an arbitrary string to ExtractedField would put a category nothing
+    // in the product understands into the database and the clinician view.
+    const { facts, rejected } = groundFacts(
+      [{ field: "diagnosis", value: "rash", span_start: 13, span_end: 17, confidence: 1, uncertain: false }],
+      turn
+    );
+    assert.equal(facts.length, 0, "\"diagnosis\" is not a field this model may assign");
+    assert.equal(rejected, 1);
+  });
+
+  test("every declared field is accepted", () => {
+    for (const field of EXTRACTED_FIELDS) {
+      const { facts } = groundFacts(
+        [{ field, value: "rash", span_start: 13, span_end: 17, confidence: 1, uncertain: false }],
+        turn
+      );
+      assert.equal(facts.length, 1, `${field} must be accepted`);
+    }
+  });
+
   test("the model and prompt are pinned, not aliased", () => {
     // A moving alias silently invalidates any evaluation run performed against it.
     assert.doesNotMatch(DEFAULT_MODEL, /latest/, "must not track a mutable alias");
@@ -109,6 +148,16 @@ describe("retrieval PHI gate", () => {
       assert.doesNotMatch(d.id, /p1/, "patient scope belongs in filtered metadata, not the id");
       assert.equal(d.metadata.patient, "p1");
     }
+  });
+
+  test("SCOPE: a query with no tenant/patient is refused at runtime, not silently widened", async () => {
+    const p = new MossRetrievalProvider();
+    // The type forbids this; the cast simulates a JS caller or a bad refactor.
+    await assert.rejects(
+      () => p.query("idx", "rash", {} as unknown as Parameters<typeof p.query>[2]),
+      RetrievalProhibitedError,
+      "an unscoped retrieval query must be impossible, not merely post-filtered"
+    );
   });
 
   test("unavailable retrieval is an explicit result, never a confident empty one", async () => {

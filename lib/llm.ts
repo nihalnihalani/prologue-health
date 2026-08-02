@@ -34,15 +34,19 @@ export const PROMPT_VERSION = "extract-v1";
  */
 export const DEFAULT_MODEL = "gemini-3.6-flash";
 
-export type ExtractedField =
-  | "symptom"
-  | "onset"
-  | "severity_report"
-  | "medication_taking"
-  | "medication_stopped"
-  | "correction"
-  | "concern"
-  | "negation";
+/** The closed set of categories the model may assign. Single source of truth. */
+export const EXTRACTED_FIELDS = [
+  "symptom",
+  "onset",
+  "severity_report",
+  "medication_taking",
+  "medication_stopped",
+  "correction",
+  "concern",
+  "negation",
+] as const;
+
+export type ExtractedField = (typeof EXTRACTED_FIELDS)[number];
 
 export interface ExtractedFact {
   field: ExtractedField;
@@ -101,13 +105,9 @@ const FACT_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          field: {
-            type: "string",
-            enum: [
-              "symptom", "onset", "severity_report", "medication_taking",
-              "medication_stopped", "correction", "concern", "negation",
-            ],
-          },
+          // Derived from EXTRACTED_FIELDS so the prompt contract and the
+          // runtime validation cannot drift apart.
+          field: { type: "string", enum: EXTRACTED_FIELDS },
           value: { type: "string" },
           span_start: { type: "integer" },
           span_end: { type: "integer" },
@@ -274,12 +274,22 @@ export function groundFacts(
 ): { facts: ExtractedFact[]; rejected: number } {
   const facts: ExtractedFact[] = [];
   let rejected = 0;
+  const hay = turnText.toLowerCase();
 
   for (const c of candidates) {
     const f = c as Record<string, unknown>;
     const start = Number(f.span_start);
     const end = Number(f.span_end);
     const value = String(f.value ?? "").trim();
+
+    // The field must be one we declared. Casting an arbitrary string through as
+    // ExtractedField would let an unknown category reach the database and the
+    // clinician view under a name nothing in the product understands.
+    const field = String(f.field ?? "");
+    if (!EXTRACTED_FIELDS.includes(field as ExtractedField)) {
+      rejected++;
+      continue;
+    }
 
     const spanValid =
       Number.isInteger(start) && Number.isInteger(end) &&
@@ -290,28 +300,43 @@ export function groundFacts(
       continue;
     }
 
-    const span = turnText.slice(start, end).toLowerCase();
-    const hay = turnText.toLowerCase();
     const needle = value.toLowerCase();
+    const span = hay.slice(start, end);
 
-    // Grounded if the span contains the value, or the value appears verbatim in
-    // the turn (offset drift), or the span's words overlap the value.
-    const overlaps =
-      span.includes(needle) ||
-      hay.includes(needle) ||
-      needle.split(/\s+/).some((w) => w.length > 3 && span.includes(w));
+    /*
+     * The stored span MUST support the stored value.
+     *
+     * This previously accepted a fact whenever the value appeared anywhere in
+     * the utterance, even if the claimed span pointed at unrelated words. That
+     * defeats the entire point of span-grounding: a clinician clicking through
+     * to "the words this came from" would have been shown the wrong words.
+     *
+     * Models are reliably good at quoting and unreliably good at character
+     * offsets, so rather than discard an otherwise-valid extraction we REPAIR a
+     * drifted offset when the value is verifiably present, and reject outright
+     * when it is not. Every surviving fact therefore has a span that really does
+     * contain its value.
+     */
+    let spanStart = start;
+    let spanEnd = end;
 
-    if (!overlaps) {
-      rejected++;
-      continue;
+    if (!span.includes(needle)) {
+      const at = hay.indexOf(needle);
+      if (at === -1) {
+        // The value is not in the utterance at all — this is an invention.
+        rejected++;
+        continue;
+      }
+      spanStart = at;
+      spanEnd = at + needle.length;
     }
 
     const confidence = Number(f.confidence);
     facts.push({
-      field: f.field as ExtractedField,
+      field: field as ExtractedField,
       value,
-      spanStart: start,
-      spanEnd: end,
+      spanStart,
+      spanEnd,
       confidence: Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0.5,
       uncertain: Boolean(f.uncertain),
     });

@@ -202,9 +202,9 @@ export default function PatientPage() {
           text,
           locale,
           atSeconds,
-          chartSummary: chartRef.current
-            ? chartSummaryFor(chartRef.current.medications, chartRef.current.conditions.map((c) => c.text))
-            : "",
+          // chartSummary is deliberately NOT sent. Chart context is authorized
+          // data the server derives itself; accepting it from the browser was a
+          // prompt-injection surface and let the client assert chart facts.
         }),
       })
         .then((res) => (res.ok ? res.json() : null))

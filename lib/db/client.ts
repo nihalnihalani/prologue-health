@@ -35,6 +35,13 @@ export const databaseConfigured = Boolean(url);
  * In pilot/production a missing URL is fatal by design.
  */
 export function assertDatabaseConfigured(): void {
+  // Unverified TLS is a development affordance, never a production posture.
+  if (runtimeMode() === "pilot" && process.env.DATABASE_SSL && process.env.DATABASE_SSL !== "require") {
+    throw new DatabaseUnavailableError(
+      `DATABASE_SSL="${process.env.DATABASE_SSL}" is refused in pilot mode: the control plane holds ` +
+        `PHI and must use a verified TLS connection.`
+    );
+  }
   if (databaseConfigured) return;
   const mode = runtimeMode();
   if (mode === "pilot") {
@@ -58,7 +65,25 @@ export function getPool(): Pool {
       idleTimeoutMillis: 30_000,
       // Managed Postgres (Neon and friends) terminates plaintext connections.
       // Local docker in tests does not offer TLS at all, so this is opt-out.
-      ssl: process.env.DATABASE_SSL === "disable" ? undefined : { rejectUnauthorized: false },
+      /*
+       * Verify the server certificate by DEFAULT.
+       *
+       * This used to send `rejectUnauthorized: false` for every non-local
+       * connection, which encrypts the link but authenticates nothing — a
+       * machine-in-the-middle on the path to a managed Postgres could read and
+       * rewrite the entire clinical control plane while TLS still "worked".
+       *
+       *   DATABASE_SSL=disable      plaintext, for a local container only
+       *   DATABASE_SSL=no-verify    encrypted but UNVERIFIED; explicit opt-in,
+       *                             refused in pilot mode
+       *   (unset)                   TLS with certificate verification
+       */
+      ssl:
+        process.env.DATABASE_SSL === "disable"
+          ? undefined
+          : process.env.DATABASE_SSL === "no-verify"
+            ? { rejectUnauthorized: false }
+            : true,
     });
   }
   return pool;
