@@ -178,7 +178,7 @@ export default function ProvePage() {
           <button
             key={p.key}
             onClick={() => apply(p)}
-            className="btn"
+            className="btn stacked"
             aria-pressed={active === p.key}
             style={{
               textAlign: "left",
