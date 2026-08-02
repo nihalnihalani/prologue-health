@@ -5,6 +5,7 @@ import { resolveTenantId } from "@/lib/durableStore";
 import { databaseConfigured } from "@/lib/db/client";
 import * as repo from "@/lib/db/sessions";
 import { runtimeMode } from "@/lib/runtime";
+import { requireActor, assertMayAccessPatient, NotAuthenticatedError, ForbiddenError } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -81,6 +82,22 @@ export async function POST(req: Request) {
       if (found.rows[0]) {
         dbSessionId = found.rows[0].id as string;
         patientRef = found.rows[0].patient_ref as string;
+
+        /*
+         * A patient token may drive exactly ONE patient's intake.
+         *
+         * Checked against the SESSION's patient reference rather than anything
+         * the request asserts — otherwise the caller would be marking their own
+         * homework and could submit turns into someone else's chart.
+         */
+        try {
+          const actor = requireActor(req);
+          assertMayAccessPatient(actor, patientRef);
+        } catch (err) {
+          const status =
+            err instanceof NotAuthenticatedError || err instanceof ForbiddenError ? err.status : 401;
+          return NextResponse.json({ error: (err as Error).message }, { status });
+        }
         const appended = await repo.appendTurn({
           tenantId,
           sessionId: dbSessionId,

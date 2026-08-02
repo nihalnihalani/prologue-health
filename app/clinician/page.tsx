@@ -257,11 +257,9 @@ export default function ClinicianPage() {
         headers: { "Content-Type": "application/json" },
         // The pilot secret is server-side only. A NEXT_PUBLIC_ variable would
         // have shipped it to every browser, which defeats the gate entirely.
-        body: JSON.stringify({
-          sessionId,
-          clinicianId: "practitioner-osei",
-          decisions,
-        }),
+        // No clinicianId. WHO is signing is decided by the server from the
+        // verified actor token; a name chosen by the browser is not identity.
+        body: JSON.stringify({ sessionId, decisions }),
       });
       const j = await res.json();
 

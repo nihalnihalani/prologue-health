@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireActor, NotAuthenticatedError, ForbiddenError } from "@/lib/auth";
 import { GoogleGenAI } from "@google/genai";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,15 @@ export const dynamic = "force-dynamic";
  *
  * Docs: https://ai.google.dev/gemini-api/docs/ephemeral-tokens
  */
-export async function GET() {
+export async function GET(req: Request) {
+  // Anonymous minting of a paid provider credential is not acceptable.
+  try {
+    requireActor(req);
+  } catch (err) {
+    const status = err instanceof NotAuthenticatedError || err instanceof ForbiddenError ? err.status : 401;
+    return NextResponse.json({ error: (err as Error).message }, { status });
+  }
+
   const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!key) {
     return NextResponse.json({ error: "voice_unconfigured" }, { status: 503 });

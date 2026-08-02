@@ -6,6 +6,7 @@ import * as repo from "@/lib/db/sessions";
 import { readChart } from "@/lib/medplum";
 import { checkEligibility } from "@/lib/stedi";
 import { t, type Locale } from "@/lib/i18n";
+import { requireActor, assertMayAccessPatient, NotAuthenticatedError, ForbiddenError } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -76,6 +77,17 @@ export async function POST(req: Request) {
       }
       dbSessionId = found.rows[0].id as string;
       patientRef = found.rows[0].patient_ref as string;
+
+      // These tools read the chart and call the payer. Scope them to the
+      // session's own patient, checked server-side.
+      try {
+        const actor = requireActor(req);
+        assertMayAccessPatient(actor, patientRef);
+      } catch (err) {
+        const status =
+          err instanceof NotAuthenticatedError || err instanceof ForbiddenError ? err.status : 401;
+        return NextResponse.json({ error: (err as Error).message }, { status });
+      }
     } catch (err) {
       console.error("[voice-tool] session lookup failed:", (err as Error).message);
       return NextResponse.json({ error: "session unavailable" }, { status: 503 });

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireActor, NotAuthenticatedError, ForbiddenError } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +10,21 @@ export const dynamic = "force-dynamic";
  * this via Sec-WebSocket-Protocol. The API key never reaches the client.
  * The SDK calls this before every connection AND reconnection.
  */
-export async function GET() {
+export async function GET(req: Request) {
+  /*
+   * Provider access is not free and not anonymous.
+   *
+   * This endpoint minted a real Deepgram credential for anyone who could reach
+   * it — an unauthenticated cost channel, and a way to obtain a clinic's voice
+   * capacity without ever entering the product.
+   */
+  try {
+    requireActor(req);
+  } catch (err) {
+    const status = err instanceof NotAuthenticatedError || err instanceof ForbiddenError ? err.status : 401;
+    return NextResponse.json({ error: (err as Error).message }, { status });
+  }
+
   const key = process.env.DEEPGRAM_API_KEY;
   if (!key) {
     return NextResponse.json({ error: "voice_unconfigured" }, { status: 503 });

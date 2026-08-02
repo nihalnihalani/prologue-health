@@ -12,6 +12,7 @@ import {
 import { IntegrationUnavailableError, runtimeMode } from "@/lib/runtime";
 import { persistApprovalDecisions, recordApprovalOutcome, loadSession } from "@/lib/durableStore";
 import { databaseConfigured } from "@/lib/db/client";
+import { requireActor, NotAuthenticatedError, ForbiddenError } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   let body: {
     sessionId?: string;
+    /** Accepted and IGNORED. The signer comes from the verified token. */
     clinicianId?: string;
     clinicianSecret?: string;
     decisions?: ItemDecision[];
@@ -40,9 +42,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
-  const { sessionId, clinicianId, clinicianSecret, decisions = [] } = body;
+  const { sessionId, clinicianSecret, decisions = [] } = body;
   if (!sessionId) return NextResponse.json({ error: "sessionId is required" }, { status: 400 });
-  if (!clinicianId) return NextResponse.json({ error: "clinicianId is required" }, { status: 400 });
+
+  /*
+   * WHO is signing is decided here, never by the request.
+   *
+   * The clinician id used to arrive in the body — the browser sent a hard-coded
+   * "practitioner-osei" — which meant the attesting identity on a clinical
+   * record was whatever the client typed. A display name is not proof of
+   * identity. The signing actor now comes from the verified token, and a
+   * body-supplied clinicianId is ignored entirely.
+   */
+  let actor;
+  try {
+    actor = requireActor(req, "clinician");
+  } catch (err) {
+    const status = err instanceof NotAuthenticatedError || err instanceof ForbiddenError ? err.status : 401;
+    return NextResponse.json({ error: (err as Error).message }, { status });
+  }
+  const clinicianId = actor.subject;
 
   // Canonical state. Nothing clinical is taken from the request.
   let session = getSession(sessionId);
