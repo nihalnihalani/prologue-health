@@ -7,8 +7,11 @@ import {
   IncompleteReviewError,
   InvalidTransitionError,
   type ItemDecision,
+  type IntakeState,
 } from "@/lib/intake";
 import { IntegrationUnavailableError, runtimeMode } from "@/lib/runtime";
+import { persistApprovalDecisions, recordApprovalOutcome, loadSession } from "@/lib/durableStore";
+import { databaseConfigured } from "@/lib/db/client";
 
 export const dynamic = "force-dynamic";
 
@@ -42,12 +45,73 @@ export async function POST(req: Request) {
   if (!clinicianId) return NextResponse.json({ error: "clinicianId is required" }, { status: 400 });
 
   // Canonical state. Nothing clinical is taken from the request.
-  const session = getSession(sessionId);
+  let session = getSession(sessionId);
+
   if (!session) {
-    return NextResponse.json({ error: "unknown session" }, { status: 404 });
+    /*
+     * Restart recovery.
+     *
+     * This used to 404 whenever the in-process map had lost the session — so a
+     * server restart between intake and review made a real, durably-stored
+     * session permanently unapprovable, and the clinician had no way to tell
+     * that from "no such session". Rehydrate from durable storage instead.
+     */
+    const durable = await loadSession(sessionId);
+    if (!durable?.map) {
+      return NextResponse.json({ error: "unknown session" }, { status: 404 });
+    }
+    // A recovered session re-enters review, never review-complete: the durable
+    // state is the authority for what has happened so far.
+    const recoveredState: IntakeState =
+      durable.state === "signed" ? "signed" : "ready_for_review";
+
+    session = putSession({
+      id: sessionId,
+      patientId: durable.patientRef,
+      state: recoveredState,
+      locale: durable.locale,
+      map: durable.map,
+      createdAt: durable.updatedAt,
+      updatedAt: durable.updatedAt,
+    });
   }
 
   try {
+    /*
+     * Record the DECISIONS before attempting any external write.
+     *
+     * The clinician's judgement is the thing that must not be lost. Writing it
+     * first — with the authorised writes enqueued in the same transaction —
+     * means a crash mid-approval leaves a recoverable record of what was
+     * decided, instead of no evidence that review ever happened.
+     */
+    let durableDecisions: Awaited<ReturnType<typeof persistApprovalDecisions>> | null = null;
+    if (databaseConfigured) {
+      durableDecisions = await persistApprovalDecisions({
+        externalId: sessionId,
+        clinicianSubject: clinicianId,
+        decisions: decisions.map((d) => ({
+          itemKey: d.itemId,
+          kind: d.decision,
+          editedText: d.editedText,
+        })),
+        writes: [
+          {
+            idempotencyKey: `approve:${sessionId}:Composition`,
+            resourceType: "Composition",
+            payload: { sessionId, clinicianId },
+          },
+        ],
+      });
+
+      if (durableDecisions.alreadySigned) {
+        return NextResponse.json(
+          { error: "session is already signed", sessionId },
+          { status: 409 }
+        );
+      }
+    }
+
     const result = await approveIntake(session, {
       sessionId,
       clinicianId,
@@ -55,6 +119,28 @@ export async function POST(req: Request) {
       decisions,
     });
     putSession(session);
+
+    /*
+     * Sign durably ONLY on what actually landed.
+     *
+     * `signed` is a claim about the world, not about our intent, so the durable
+     * transition happens from the receipts rather than from having reached the
+     * end of this function.
+     */
+    let durableSigned: boolean | null = null;
+    if (databaseConfigured && result.signature) {
+      const outcome = await recordApprovalOutcome({
+        externalId: sessionId,
+        clinicianSubject: clinicianId,
+        receipts: result.signature.writes.map((w) => ({
+          resourceType: w.resourceType,
+          id: w.id,
+          status: w.status,
+          error: w.error,
+        })),
+      });
+      durableSigned = outcome.signed;
+    }
 
     return NextResponse.json(
       {
@@ -65,6 +151,11 @@ export async function POST(req: Request) {
         idempotentReplay: result.idempotentReplay,
         warnings: result.warnings,
         mode: runtimeMode(),
+        // Honest about the durable record: a receipt that only exists in this
+        // process is not a receipt.
+        durable: databaseConfigured
+          ? { decisionsRecorded: Boolean(durableDecisions?.ok), signed: durableSigned }
+          : { decisionsRecorded: false, signed: false, reason: "database not configured" },
       },
       { status: result.idempotentReplay ? 200 : 201 }
     );

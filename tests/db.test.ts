@@ -22,6 +22,10 @@ const HAVE_DB = Boolean(process.env.DATABASE_URL);
 const d = HAVE_DB ? describe : describe.skip;
 
 d("durable control plane", () => {
+  // The database persists across runs, so any fixed external id would inherit
+  // the previous run's state — including a session that is already signed.
+  const RUN = `r${Date.now().toString(36)}`;
+
   let db: typeof import("../lib/db/sessions");
   let client: typeof import("../lib/db/client");
   let tenantA = "";
@@ -248,6 +252,84 @@ d("durable control plane", () => {
     assert.ok(iFlagged < iCalm, "an escalated case must rank above a routine one");
     assert.equal(q[iFlagged].escalated, true);
     assert.equal(q[iCalm].escalated, false);
+  });
+
+  test("APPROVAL: decisions and enqueued writes commit together", async () => {
+    // The failure this prevents: the clinician's judgement existing only in the
+    // HTTP request, so a crash before the FHIR write leaves no evidence that
+    // review ever happened.
+    const store = await import("../lib/durableStore");
+    // persistApprovalDecisions resolves the bootstrap tenant itself (tenancy is
+    // still a single clinic until real auth lands), so the fixture must live
+    // there or we would be testing a path the product never takes.
+    const t = await store.resolveTenantId();
+    const s = await db.createSession({ tenantId: t, patientRef: "Patient/appr-1" });
+    await client.getPool().query(
+      "UPDATE intake_sessions SET external_id = $2 WHERE id = $1",
+      [s.id, `ext-appr-1-${RUN}`]
+    );
+
+    const r = await store.persistApprovalDecisions({
+      externalId: `ext-appr-1-${RUN}`,
+      clinicianSubject: "dr-okafor",
+      decisions: [
+        { itemKey: "corr-1", kind: "approve" },
+        { itemKey: "corr-2", kind: "reject" },
+      ],
+      writes: [{ idempotencyKey: `approve:ext-appr-1-${RUN}:Composition`, resourceType: "Composition", payload: {} }],
+    });
+    assert.equal(r.ok, true);
+
+    assert.equal((await db.listDecisions(t, s.id)).length, 2, "both decisions persisted");
+    const outbox = await client.getPool().query(
+      "SELECT idempotency_key, status FROM write_outbox WHERE session_id = $1",
+      [s.id]
+    );
+    assert.equal(outbox.rows.length, 1, "the authorised write is enqueued, not yet performed");
+    assert.equal(outbox.rows[0].status, "pending");
+
+    // Still NOT signed: nothing has landed externally yet.
+    const mid = await db.getSession(t, s.id);
+    assert.notEqual(mid!.state, "signed", "authorising a write is not the same as having written");
+  });
+
+  test("APPROVAL: signing requires a write that actually landed", async () => {
+    const store = await import("../lib/durableStore");
+    const t = await store.resolveTenantId();
+    const s = await db.createSession({ tenantId: t, patientRef: "Patient/appr-2" });
+    await client.getPool().query(
+      "UPDATE intake_sessions SET external_id = $2 WHERE id = $1", [s.id, `ext-appr-2-${RUN}`]
+    );
+
+    // Every write failed — this must not sign.
+    const failed = await store.recordApprovalOutcome({
+      externalId: `ext-appr-2-${RUN}`,
+      clinicianSubject: "dr-okafor",
+      receipts: [{ resourceType: "Composition", status: "failed", error: "server refused" }],
+    });
+    assert.equal(failed.signed, false, "a failed write must never produce a signed session");
+    assert.notEqual((await db.getSession(t, s.id))!.state, "signed");
+
+    // A real server-assigned id did land — now it may sign.
+    const landed = await store.recordApprovalOutcome({
+      externalId: `ext-appr-2-${RUN}`,
+      clinicianSubject: "dr-okafor",
+      receipts: [{ resourceType: "Composition", status: "written", id: "Composition/real-123" }],
+    });
+    assert.equal(landed.signed, true);
+    assert.equal((await db.getSession(t, s.id))!.state, "signed");
+  });
+
+  test("APPROVAL: a signed session refuses a second set of decisions", async () => {
+    const store = await import("../lib/durableStore");
+    const replay = await store.persistApprovalDecisions({
+      externalId: `ext-appr-2-${RUN}`,
+      clinicianSubject: "dr-okafor",
+      decisions: [{ itemKey: "corr-9", kind: "approve" }],
+      writes: [],
+    });
+    assert.equal(replay.alreadySigned, true, "finality is terminal");
+    assert.equal(replay.ok, false);
   });
 
   test("audit history is tenant-scoped and ordered", async () => {

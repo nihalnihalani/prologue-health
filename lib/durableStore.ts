@@ -303,3 +303,186 @@ export async function claimDurable(
     return { ok: false, error: (err as Error).message };
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Approval — the clinical attestation boundary                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Persist a clinician's explicit decisions and enqueue the external writes
+ * they authorise, in ONE transaction.
+ *
+ * This is what makes an approval survivable. Previously the decisions existed
+ * only in the request, the FHIR writes were attempted immediately, and the
+ * session was marked signed in a process-local map — so a crash between the
+ * decision and the write left no record that the clinician had ever decided
+ * anything, and a restart made the session unapprovable at all (the route read
+ * memory and 404'd).
+ *
+ * The session is deliberately NOT moved to `signed` here. It is not signed
+ * until something actually landed; the outbox rows record what was authorised,
+ * and `recordApprovalOutcome` below records what really happened.
+ */
+export async function persistApprovalDecisions(input: {
+  externalId: string;
+  clinicianSubject: string;
+  decisions: { itemKey: string; kind: "approve" | "edit" | "reject"; originalText?: string; editedText?: string }[];
+  writes: { idempotencyKey: string; resourceType: string; payload: unknown }[];
+}): Promise<{ ok: boolean; sessionId?: string; version?: number; alreadySigned?: boolean; error?: string }> {
+  if (!databaseConfigured) return { ok: false, error: "database not configured" };
+
+  try {
+    const tenant = await resolveTenantId();
+    const { withTransaction } = await import("./db/client");
+
+    return await withTransaction(async (c) => {
+      // Lock the row for the duration: two clinicians must not interleave
+      // decisions on the same session.
+      const found = await c.query(
+        `SELECT id, version, state FROM intake_sessions
+          WHERE tenant_id = $1 AND external_id = $2 FOR UPDATE`,
+        [tenant, input.externalId]
+      );
+      if (!found.rows[0]) return { ok: false, error: "unknown session" };
+
+      const row = found.rows[0];
+      if (row.state === "signed") {
+        // Terminal. A replay must not append a second set of decisions.
+        return { ok: false, alreadySigned: true, sessionId: row.id, version: Number(row.version) };
+      }
+
+      const actor = await c.query(
+        `INSERT INTO actors (tenant_id, subject, role) VALUES ($1,$2,'clinician')
+         ON CONFLICT (tenant_id, subject) DO UPDATE SET subject = EXCLUDED.subject
+         RETURNING id`,
+        [tenant, input.clinicianSubject]
+      );
+      const actorId = actor.rows[0].id as string;
+
+      for (const d of input.decisions) {
+        await repo.recordDecision(
+          {
+            tenantId: tenant,
+            sessionId: row.id,
+            itemKey: d.itemKey,
+            kind: d.kind,
+            originalText: d.originalText,
+            editedText: d.editedText,
+            actorId,
+            reviewVersion: Number(row.version),
+          },
+          c
+        );
+      }
+
+      for (const w of input.writes) {
+        await repo.enqueueWrite(
+          {
+            tenantId: tenant,
+            sessionId: row.id,
+            idempotencyKey: w.idempotencyKey,
+            resourceType: w.resourceType,
+            payload: w.payload,
+          },
+          c
+        );
+      }
+
+      await repo.recordAudit(
+        {
+          tenantId: tenant,
+          sessionId: row.id,
+          action: "approval.decisions_recorded",
+          actorId,
+          actorSubject: input.clinicianSubject,
+          outcome: "success",
+          detail: { decisions: input.decisions.length, writesEnqueued: input.writes.length },
+        },
+        c
+      );
+
+      return { ok: true, sessionId: row.id, version: Number(row.version) };
+    });
+  } catch (err) {
+    const detail = (err as Error).message;
+    console.error("[durable] approval persist failed:", detail);
+    if (runtimeMode() === "pilot") throw err;
+    return { ok: false, error: detail };
+  }
+}
+
+/**
+ * Record what the external writes actually did, and sign ONLY if they landed.
+ *
+ * `signed` is a claim about the world, not about our intent: it is set only
+ * when at least one write really succeeded. A partial or wholly failed
+ * attestation stays reviewable and retryable rather than being presented to a
+ * clinic as complete.
+ */
+export async function recordApprovalOutcome(input: {
+  externalId: string;
+  clinicianSubject: string;
+  receipts: { resourceType: string; id?: string; status: "written" | "not-attempted" | "failed"; error?: string }[];
+}): Promise<{ ok: boolean; signed: boolean; error?: string }> {
+  if (!databaseConfigured) return { ok: false, signed: false, error: "database not configured" };
+
+  try {
+    const tenant = await resolveTenantId();
+    const { withTransaction } = await import("./db/client");
+
+    return await withTransaction(async (c) => {
+      const found = await c.query(
+        `SELECT id, version FROM intake_sessions
+          WHERE tenant_id = $1 AND external_id = $2 FOR UPDATE`,
+        [tenant, input.externalId]
+      );
+      if (!found.rows[0]) return { ok: false, signed: false, error: "unknown session" };
+      const row = found.rows[0];
+
+      for (const r of input.receipts) {
+        await c.query(
+          `INSERT INTO write_receipts
+             (tenant_id, session_id, resource_type, resource_id, status, detail)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [tenant, row.id, r.resourceType, r.id ?? null, r.status, r.error ?? null]
+        );
+      }
+
+      const landed = input.receipts.some((r) => r.status === "written" && r.id);
+      if (landed) {
+        const actor = await c.query(
+          `INSERT INTO actors (tenant_id, subject, role) VALUES ($1,$2,'clinician')
+           ON CONFLICT (tenant_id, subject) DO UPDATE SET subject = EXCLUDED.subject
+           RETURNING id`,
+          [tenant, input.clinicianSubject]
+        );
+        await c.query(
+          `UPDATE intake_sessions
+              SET state = 'signed', signed_by = $3, signed_at = now(),
+                  version = version + 1, updated_at = now()
+            WHERE tenant_id = $1 AND id = $2`,
+          [tenant, row.id, actor.rows[0].id]
+        );
+      }
+
+      await repo.recordAudit(
+        {
+          tenantId: tenant,
+          sessionId: row.id,
+          action: landed ? "approval.signed" : "approval.not_persisted",
+          actorSubject: input.clinicianSubject,
+          outcome: landed ? "success" : "partial",
+          detail: { receipts: input.receipts.length },
+        },
+        c
+      );
+
+      return { ok: true, signed: landed };
+    });
+  } catch (err) {
+    const detail = (err as Error).message;
+    console.error("[durable] approval outcome failed:", detail);
+    if (runtimeMode() === "pilot") throw err;
+    return { ok: false, signed: false, error: detail };
+  }
+}
