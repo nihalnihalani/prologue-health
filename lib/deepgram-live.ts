@@ -284,18 +284,23 @@ export async function connectDeepgram(opts: {
 
     send({
       type: "Settings",
+      // Do not let this conversation train anyone's model. A clinic's intake
+      // audio is PHI, and the default must be opt-OUT, not opt-in.
+      mip_opt_out: true,
       audio: {
         input: { encoding: "linear16", sample_rate: INPUT_RATE },
         output: { encoding: "linear16", sample_rate: OUTPUT_RATE, container: "none" },
       },
       agent: {
-        language: "en",
+        // `language` at agent level is deprecated in the current Voice Agent
+        // protocol; the per-provider language is what is honoured.
         listen: {
           provider: {
             type: "deepgram",
             // Nova-3 Medical: the medical vocabulary variant. This is the whole
             // reason Deepgram is the English path.
             model: "nova-3-medical",
+            language: "en",
             // Closed vocabulary of THIS patient's drugs — the most favourable
             // possible condition for keyterm biasing.
             keyterms: opts.keyterms,
@@ -460,8 +465,19 @@ export async function connectDeepgram(opts: {
           name?: string;
           arguments?: string;
           client_side?: boolean;
+          thought_signature?: string;
         }[];
         for (const fn of fns) {
+          /*
+           * Honour the execution flag.
+           *
+           * `client_side: false` means the provider is running that function
+           * itself. Answering anyway sends an unsolicited FunctionCallResponse
+           * for a call we were never asked to make, which at best is ignored
+           * and at worst desynchronises the turn.
+           */
+          if (fn.client_side === false) continue;
+
           // `arguments` arrives as a JSON-ENCODED STRING, not an object.
           let args: Record<string, unknown> = {};
           try {
@@ -477,12 +493,16 @@ export async function connectDeepgram(opts: {
             result = { error: (err as Error).message };
           }
 
-          // `content` must be a STRING.
+          // `content` must be a STRING, and `thought_signature` must be echoed
+          // back UNCHANGED when the provider supplied one — it is the
+          // correlation token for the model's reasoning step, and dropping it
+          // breaks the chain on models that require it.
           send({
             type: "FunctionCallResponse",
             id: fn.id,
             name: fn.name,
             content: JSON.stringify(result),
+            ...(fn.thought_signature ? { thought_signature: fn.thought_signature } : {}),
           });
         }
         break;

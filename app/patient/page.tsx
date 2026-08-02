@@ -152,6 +152,16 @@ export default function PatientPage() {
   /* ---- the one path every mode funnels into ---- */
   const handlePatientUtterance = useCallback(
     async (text: string, atSeconds: number, kind?: string, speakReply = true) => {
+      /*
+       * ONE conversation authority.
+       *
+       * When a live voice provider is driving, IT speaks and its transcript is
+       * what the patient hears. The engine still computes the clinical draft —
+       * that is the product — but it must not also emit an agent turn, or the
+       * screen shows one reply while the speaker says another. `speakReply` is
+       * false exactly when a provider owns the spoken turn.
+       */
+      const providerOwnsReply = !speakReply;
       const s = sessionRef.current;
       if (!s || !text.trim()) return;
       setBusy(true);
@@ -163,14 +173,14 @@ export default function PatientPage() {
       if (kind === "recon") {
         s.reconcile(["lamotrigine", "divalproex"], ["furosemide"]);
         sync(s.map);
-        say(t(locale, "reconAck"), speakReply);
+        if (!providerOwnsReply) say(t(locale, "reconAck"), speakReply);
         setBusy(false);
         return;
       }
       if (kind === "doorknob") {
         s.addDoorknob(text, atSeconds);
         sync(s.map);
-        say(t(locale, "doorknobAck"), speakReply);
+        if (!providerOwnsReply) say(t(locale, "doorknobAck"), speakReply);
         setDone(true);
         setBusy(false);
         return;
@@ -178,7 +188,7 @@ export default function PatientPage() {
 
       const r = s.patientSaid(text, atSeconds);
       sync(s.map);
-      say(r.agentSays, speakReply);
+      if (!providerOwnsReply) say(r.agentSays, speakReply);
 
       /*
        * Server-owned turn.
@@ -231,46 +241,50 @@ export default function PatientPage() {
    * Tool handler shared by both transports. The engine owns the reasoning;
    * the voice provider only supplies words.
    */
+  /**
+   * Voice tool calls are executed on the SERVER.
+   *
+   * These tools read the chart, call the payer, and record clinical statements.
+   * Running them in the browser put all of that inside a surface the patient's
+   * device controls, and let `save_confirmed_statement` report success without
+   * saving anything. This is now a thin proxy: it forwards the call and returns
+   * the server's answer unmodified.
+   *
+   * When the server returns `say_exactly`, that is deterministic safety
+   * speaking. It is injected as an interrupt so it cuts the model off mid-word
+   * rather than waiting for the model to choose to comply.
+   */
   const handleTool = useCallback(
     async (name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> => {
       const sess = sessionRef.current;
-      const chart = chartRef.current;
-      if (!sess || !chart) return { error: "session not ready" };
+      if (!sess) return { error: "session not ready" };
 
-      switch (name) {
-        case "check_red_flags": {
-          const flag = checkRedFlags(String(args.transcript ?? ""));
-          if (!flag) return { escalate: false };
-          const spoken = t(locale, flag.patientKey ?? "escalateGeneric");
-          // Deterministic safety outranks the model: cut it off mid-word rather
-          // than hoping it chooses to follow the instruction.
-          dgRef.current?.interruptWith(spoken);
-          return { escalate: true, rule: flag.ruleId, severity: flag.severity, say_exactly: spoken };
+      try {
+        const res = await fetch("/api/voice-tool", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: sess.map.sessionId, name, args, locale }),
+        });
+        const j = (await res.json()) as Record<string, unknown>;
+        if (!res.ok) return { error: String(j.error ?? "tool failed") };
+
+        if (typeof j.say_exactly === "string") {
+          dgRef.current?.interruptWith(j.say_exactly);
         }
-        case "get_relevant_medications":
-          return {
-            medications: chart.medications.map((m) => ({
-              name: m.name,
-              started_days_ago: m.startedDaysAgo,
-              dosage: m.dosage,
-            })),
-          };
-        case "run_eligibility_check": {
-          const res = await fetch("/api/eligibility", { method: "POST" });
-          const j = await res.json();
-          sess.attachBenefits(j.benefits, j.ms);
-          sync(sess.map);
-          return {
-            active: j.benefits.active,
-            copays: j.benefits.copays,
-            deductible_remaining: j.benefits.deductibleRemaining,
-            note: "Benefits only. Never state a total price.",
-          };
+
+        // Keep the local view in step with a payer call the server just made.
+        if (name === "run_eligibility_check") {
+          try {
+            const e = await fetch("/api/eligibility", { method: "POST" });
+            const ej = await e.json();
+            sess.attachBenefits(ej.benefits, ej.ms);
+            sync(sess.map);
+          } catch { /* the tool result already stands */ }
         }
-        case "save_confirmed_statement":
-          return { saved: true, status: "draft" };
-        default:
-          return { error: "unknown tool" };
+
+        return j;
+      } catch (err) {
+        return { error: (err as Error).message };
       }
     },
     [locale, sync]

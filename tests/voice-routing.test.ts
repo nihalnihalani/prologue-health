@@ -116,3 +116,23 @@ test("echo suppression never swallows a real patient turn", () => {
     assert.equal(isEchoOfAgent(real, agentSaid), false, `must not suppress: "${real}"`);
   }
 });
+
+test("Deepgram settings opt out of model improvement and set language per-provider", async () => {
+  // A clinic's intake audio is PHI: training must be opt-OUT by default, not
+  // something a deployment has to remember to turn off. `agent.language` is
+  // deprecated in the current protocol; the listen provider carries it.
+  const src = await (await import("node:fs/promises")).readFile("lib/deepgram-live.ts", "utf8");
+  assert.match(src, /mip_opt_out:\s*true/, "model-improvement opt-out must be set");
+  assert.doesNotMatch(src, /agent:\s*\{\s*language:/, "agent.language is deprecated");
+  assert.match(src, /model:\s*"nova-3-medical",\s*\n\s*language:\s*"en"/, "language belongs to the listen provider");
+});
+
+test("a provider-executed function is not answered, and correlation is echoed", () => {
+  // client_side:false means Deepgram runs it; replying anyway sends an
+  // unsolicited response for a call we were never asked to make. And a
+  // thought_signature is the model's reasoning correlation token — dropping it
+  // breaks the chain on providers that require it.
+  const src = require("node:fs").readFileSync("lib/deepgram-live.ts", "utf8");
+  assert.match(src, /if \(fn\.client_side === false\) continue;/);
+  assert.match(src, /thought_signature: fn\.thought_signature/);
+});
