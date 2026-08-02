@@ -64,6 +64,13 @@ export default function PatientPage() {
   const [busy, setBusy] = useState(false);
   const [backend, setBackend] = useState<{ chart: string; warmMs: number } | null>(null);
   const [done, setDone] = useState(false);
+  /** Last server-side extraction result, shown in diagnostics as a draft. */
+  const [extraction, setExtraction] = useState<{
+    available: boolean; model?: string; promptVersion?: string; latencyMs?: number;
+    abstained?: boolean; abstainReason?: string | null; ungroundedRejected?: number;
+    stored?: number; reason?: string;
+    facts?: { field: string; value: string; confidence: number; uncertain: boolean }[];
+  } | null>(null);
 
   const rtl = isRTL(locale);
 
@@ -172,6 +179,37 @@ export default function PatientPage() {
       const r = s.patientSaid(text, atSeconds);
       sync(s.map);
       say(r.agentSays, speakReply);
+
+      /*
+       * Server-owned turn.
+       *
+       * This does NOT drive the conversation — the engine above already decided
+       * what to say, and lib/clinical.ts already decided whether to escalate.
+       * What the server adds is the durable record: the immutable turn, the
+       * rule outcome including its negative, and model-extracted CANDIDATE
+       * facts bound to the exact words that produced them.
+       *
+       * Deliberately not awaited into the reply path. Extraction takes ~1.5s
+       * and a patient must never wait on it to hear their next question, and a
+       * failure here must never delay or suppress an escalation the
+       * deterministic rules already raised.
+       */
+      void fetch("/api/turn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: s.map.sessionId,
+          text,
+          locale,
+          atSeconds,
+          chartSummary: chartRef.current
+            ? chartSummaryFor(chartRef.current.medications, chartRef.current.conditions.map((c) => c.text))
+            : "",
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((j) => { if (j) setExtraction(j.extraction ?? null); })
+        .catch(() => { /* the draft is an enhancement; the turn already stands */ });
 
       if (r.escalated) {
         setTurns((t) => [...t, { who: "system", text: "Escalation raised — routed to the clinic" }]);
@@ -600,6 +638,54 @@ export default function PatientPage() {
                   <span className="chip" style={{ marginInlineStart: "auto" }}>chart warm {backend?.warmMs ?? "–"} ms · {backend?.chart}</span>
                 </header>
                 <CallLog calls={map.calls} />
+
+                {/*
+                  Model-assisted DRAFT, labelled as such.
+                  These are candidates the LLM proposed from the patient's own
+                  words, each grounded in an exact span of the transcript. They
+                  are shown separately from deterministic output because they
+                  are a different KIND of claim, and none of them is clinical
+                  truth until a clinician decides on it.
+                */}
+                {extraction && (
+                  <div style={{ padding: "10px 14px", borderTop: "1px solid var(--line)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span className="mono muted" style={{ fontSize: 10.5 }}>model-assisted draft</span>
+                      {extraction.available ? (
+                        <span className="chip" style={{ fontSize: 9 }}>
+                          {extraction.model} · {extraction.latencyMs} ms
+                        </span>
+                      ) : (
+                        <span className="chip sim" style={{ fontSize: 9 }}>unavailable</span>
+                      )}
+                    </div>
+
+                    {extraction.available && extraction.facts?.length ? (
+                      <ul style={{ margin: "8px 0 0", paddingInlineStart: 18, fontSize: 12.5 }}>
+                        {extraction.facts.map((f, i) => (
+                          <li key={i} style={{ marginBottom: 2 }}>
+                            <span className="mono muted" style={{ fontSize: 10.5 }}>{f.field}</span>{" "}
+                            {f.value}
+                            {f.uncertain && <span className="muted" style={{ fontSize: 10.5 }}> · uncertain</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="muted" style={{ fontSize: 11.5, margin: "6px 0 0" }}>
+                        {extraction.available
+                          ? `No groundable facts — ${extraction.abstainReason ?? "the model abstained"}.`
+                          : extraction.reason}
+                      </p>
+                    )}
+
+                    {/* Silently dropping ungrounded output would hide how often it happens. */}
+                    {!!extraction.ungroundedRejected && (
+                      <p className="mono muted" style={{ fontSize: 10.5, margin: "6px 0 0" }}>
+                        {extraction.ungroundedRejected} ungrounded claim(s) discarded
+                      </p>
+                    )}
+                  </div>
+                )}
               </motion.section>
             </div>
           </details>

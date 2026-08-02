@@ -287,6 +287,82 @@ export async function recordRuleEvaluation(
   );
 }
 
+/**
+ * Persist model-extracted candidate facts.
+ *
+ * Every row is bound to the turn it came from and the exact character span
+ * within it, plus the provider, model version, and prompt version that produced
+ * it. That binding is the whole point: a clinician reviewing a generated fact
+ * must be able to see the words it came from, and we must be able to tell
+ * afterwards which model and prompt produced any given claim.
+ *
+ * These are CANDIDATES. Nothing here is clinical truth, and nothing here is
+ * promotable without an explicit clinician decision.
+ */
+export async function recordExtractedFacts(
+  input: {
+    tenantId: string;
+    sessionId: string;
+    turnId: string;
+    provider: string;
+    modelVersion: string;
+    promptVersion: string;
+    traceId?: string;
+    facts: {
+      field: string;
+      value: unknown;
+      spanStart: number;
+      spanEnd: number;
+      confidence?: number;
+      uncertain?: boolean;
+    }[];
+  },
+  client?: PoolClient
+): Promise<number> {
+  const q = client ?? getPool();
+  let written = 0;
+  for (const f of input.facts) {
+    await q.query(
+      `INSERT INTO extracted_facts
+         (tenant_id, session_id, turn_id, field, value, span_start, span_end,
+          confidence, uncertain, model_provider, model_version, prompt_version, trace_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [
+        input.tenantId,
+        input.sessionId,
+        input.turnId,
+        f.field,
+        JSON.stringify(f.value),
+        f.spanStart,
+        f.spanEnd,
+        f.confidence ?? null,
+        Boolean(f.uncertain),
+        input.provider,
+        input.modelVersion,
+        input.promptVersion,
+        input.traceId ?? null,
+      ]
+    );
+    written++;
+  }
+  return written;
+}
+
+/** Candidate facts for a session, newest turn last, with their source span. */
+export async function listExtractedFacts(tenantId: string, sessionId: string) {
+  const { rows } = await getPool().query(
+    `SELECT f.id, f.field, f.value, f.span_start, f.span_end, f.confidence, f.uncertain,
+            f.model_provider, f.model_version, f.prompt_version, f.created_at,
+            t.text AS source_text, t.seq AS source_seq
+       FROM extracted_facts f
+       JOIN session_turns t ON t.id = f.turn_id
+      WHERE f.tenant_id = $1 AND f.session_id = $2
+      ORDER BY t.seq, f.created_at`,
+    [tenantId, sessionId]
+  );
+  return rows;
+}
+
 /* ------------------------------------------------------------------ */
 /* Decisions                                                           */
 /* ------------------------------------------------------------------ */
