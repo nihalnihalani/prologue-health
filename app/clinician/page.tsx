@@ -58,6 +58,58 @@ const CARD_VARIANTS: Variants = {
 };
 
 
+/** One row of the clinician work queue, as returned by GET /api/session?queue=1. */
+interface QueueRow {
+  id: string;
+  patientId: string;
+  patient: string;
+  reason: string | null;
+  state: string;
+  locale: string;
+  updatedAt: string;
+  version: number;
+  urgency: string | null;
+  escalationRule: string | null;
+  itemCount: number;
+  safetyCovered: boolean | null;
+  escalated: boolean;
+}
+
+const QUEUE_STATE_LABEL: Record<string, string> = {
+  created: "started",
+  consented: "consented",
+  in_progress: "in progress",
+  ready_for_review: "ready",
+  under_review: "in review",
+  signed: "signed",
+  abandoned: "abandoned",
+};
+
+/**
+ * Which states each tab shows.
+ *
+ * "Mine" is claimed work (under_review). Identity is not enforced yet, so it
+ * cannot honestly mean "assigned to me specifically" — it means claimed by
+ * someone. The label stays deliberately modest until real auth lands.
+ */
+const QUEUE_TABS: Record<"review" | "mine" | "completed", string[]> = {
+  review: ["created", "consented", "in_progress", "ready_for_review"],
+  mine: ["under_review"],
+  completed: ["signed", "abandoned"],
+};
+
+/** Human wait time from an ISO/parseable timestamp. */
+function waitLabel(updatedAt: string): string {
+  const then = new Date(updatedAt).getTime();
+  if (!Number.isFinite(then)) return "\u2014";
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  return h < 24 ? `${h}h ${mins % 60}m` : `${Math.floor(h / 24)}d`;
+}
+
+
 export default function ClinicianPage() {
   const [map, setMap] = useState<StoryMap | null>(null);
   const [queueFilter, setQueueFilter] = useState<"review" | "mine" | "completed">("review");
@@ -83,12 +135,39 @@ export default function ClinicianPage() {
   const [replayed, setReplayed] = useState(false);
   /** Serialized last-seen map, so polling does not re-render on identical data. */
   const lastMapRef = useRef<string | null>(null);
+  /** null until the first queue fetch resolves, so "empty" and "loading" stay distinct. */
+  const [queue, setQueue] = useState<QueueRow[] | null>(null);
+  const lastQueueRef = useRef<string | null>(null);
+  /**
+   * Which session the casefile shows. A ref as well as state because the poll
+   * loop is created once and must read the current selection without being
+   * torn down and rebuilt on every click.
+   */
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     // Server is authoritative. localStorage is a same-browser fallback only, and
     // is never allowed to declare finality.
+    // The queue is real data now: escalations first, straight from the durable
+    // store. It is fetched alongside the casefile so the rail and the open
+    // session can never disagree about what exists.
     try {
-      const res = await fetch("/api/session");
+      const qres = await fetch("/api/session?queue=1");
+      if (qres.ok) {
+        const qj = (await qres.json()) as { sessions?: QueueRow[] };
+        const rows = qj.sessions ?? [];
+        const nextQ = JSON.stringify(rows);
+        if (nextQ !== lastQueueRef.current) {
+          lastQueueRef.current = nextQ;
+          setQueue(rows);
+        }
+      }
+    } catch { /* rail degrades to empty; the casefile below still loads */ }
+
+    try {
+      const sel = selectedIdRef.current;
+      const res = await fetch(sel ? `/api/session?id=${encodeURIComponent(sel)}` : "/api/session");
       if (res.ok) {
         const j = (await res.json()) as {
           map: StoryMap | null;
@@ -134,6 +213,15 @@ export default function ClinicianPage() {
     window.addEventListener("storage", onStorage);
     const t = setInterval(() => void load(), 1500);
     return () => { window.removeEventListener("storage", onStorage); clearInterval(t); };
+  }, [load]);
+
+  /** Open a case from the rail. An explicit click — reads never claim it. */
+  const selectSession = useCallback((id: string) => {
+    selectedIdRef.current = id;
+    setSelectedId(id);
+    // Force the next poll's comparison to miss so the casefile swaps immediately.
+    lastMapRef.current = null;
+    void load();
   }, [load]);
 
   const rule = (id: string, d: "approve" | "reject") =>
@@ -217,6 +305,8 @@ export default function ClinicianPage() {
     );
   }
 
+  const visibleQueue = (queue ?? []).filter((q) => QUEUE_TABS[queueFilter].includes(q.state));
+
   const said = map.items.filter((i) => i.source === "PATIENT");
   const record = map.items.filter((i) => i.source === "RECORD");
   const inferred = map.items.filter((i) => i.source === "INFERRED");
@@ -269,50 +359,48 @@ export default function ClinicianPage() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {/* Active Real Case (Maria) */}
-            {queueFilter !== "completed" && (
-              <div style={{ padding: 10, borderRadius: 6, border: "1px solid var(--accent)", background: "var(--surface)", cursor: "pointer" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <strong style={{ fontSize: 13, color: "var(--ink)" }}>{map.patient.name}</strong>
-                  <span className="chip live" style={{ fontSize: 9, padding: "2px 6px" }}>assigned</span>
-                </div>
-                <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 4 }}>{map.patient.appointment.reason}</div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--ink-3)", marginTop: 8 }}>
-                  <span>Wait: 22m</span>
-                  <span>screening: active</span>
-                </div>
-              </div>
+            {visibleQueue.length === 0 && (
+              <p className="muted" style={{ fontSize: 11.5, margin: "8px 2px" }}>
+                {queue === null ? "Loading queue\u2026" : "Nothing in this view."}
+              </p>
             )}
 
-            {/* Simulated Case 1 */}
-            {queueFilter === "review" && (
-              <div style={{ padding: 10, borderRadius: 6, border: "1px solid var(--line)", background: "var(--surface)", opacity: 0.7, cursor: "not-allowed" }} title="This is a demo placeholder">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <strong style={{ fontSize: 13 }}>John Doe</strong>
-                  <span className="chip sim" style={{ fontSize: 9, padding: "2px 6px" }}>unassigned</span>
-                </div>
-                <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 4 }}>Fever and sore throat</div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--ink-3)", marginTop: 8 }}>
-                  <span>Wait: 5m</span>
-                  <span>English (verified)</span>
-                </div>
-              </div>
-            )}
-
-            {/* Simulated Case 2 */}
-            {queueFilter === "completed" && (
-              <div style={{ padding: 10, borderRadius: 6, border: "1px solid var(--line)", background: "var(--surface)", opacity: 0.7, cursor: "not-allowed" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <strong style={{ fontSize: 13 }}>Sarah Jenkins</strong>
-                  <span className="chip live" style={{ fontSize: 9, padding: "2px 6px", background: "var(--provenance-patient-bg)", color: "var(--provenance-patient-fg)" }}>signed</span>
-                </div>
-                <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 4 }}>Routine wellness visit</div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--ink-3)", marginTop: 8 }}>
-                  <span>Signed: Today</span>
-                  <span>completed</span>
-                </div>
-              </div>
-            )}
+            {visibleQueue.map((q) => {
+              const isOpen = q.id === sessionId;
+              return (
+                <button
+                  key={q.id}
+                  onClick={() => selectSession(q.id)}
+                  title={q.escalationRule ? `Escalated: ${q.escalationRule}` : undefined}
+                  style={{
+                    textAlign: "left", font: "inherit", color: "inherit", cursor: "pointer",
+                    padding: 10, borderRadius: 6, background: "var(--surface)",
+                    border: `1px solid ${isOpen ? "var(--accent)" : q.escalated ? "var(--warn)" : "var(--line)"}`,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 6 }}>
+                    <strong style={{ fontSize: 13, color: "var(--ink)" }}>{q.patient}</strong>
+                    <span className={`chip ${q.escalated ? "sim" : "live"}`} style={{ fontSize: 9, padding: "2px 6px", flex: "none" }}>
+                      {q.escalated ? (q.urgency ?? "flagged") : QUEUE_STATE_LABEL[q.state] ?? q.state}
+                    </span>
+                  </div>
+                  {q.reason && (
+                    <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 4 }}>{q.reason}</div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--ink-3)", marginTop: 8, gap: 6 }}>
+                    <span>Wait: {waitLabel(q.updatedAt)}</span>
+                    {/*
+                      Safety coverage is reported, never inferred. `false` means the
+                      deterministic rules could not screen this locale at all, and a
+                      clinician must not read that as a clean screen.
+                    */}
+                    <span style={{ color: q.safetyCovered === false ? "var(--warn)" : undefined }}>
+                      {q.safetyCovered === false ? "not screened" : `${q.itemCount} items`}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </motion.div>
 

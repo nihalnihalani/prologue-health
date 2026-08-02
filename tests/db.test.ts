@@ -227,6 +227,29 @@ d("durable control plane", () => {
     assert.equal(rows[0].kind, "approve");
   });
 
+  test("the queue puts escalated cases first — the rail depends on this order", async () => {
+    // The clinician rail renders this order directly, so ordering is a product
+    // guarantee rather than a presentation detail: a flagged case must not sit
+    // below routine ones just because it arrived earlier.
+    const calm = await db.createSession({ tenantId: tenantA, patientRef: "Patient/q-calm" });
+    await db.transition(tenantA, calm.id, calm.version, "ready_for_review");
+
+    const flagged = await db.createSession({ tenantId: tenantA, patientRef: "Patient/q-flagged" });
+    await db.transition(tenantA, flagged.id, flagged.version, "ready_for_review");
+    await db.recordRuleEvaluation({
+      tenantId: tenantA, sessionId: flagged.id, ruleId: "mucosal-involvement",
+      fired: true, severity: "high", locale: "en", covered: true,
+    });
+
+    const q = await db.listQueue(tenantA);
+    const iFlagged = q.findIndex((r) => r.id === flagged.id);
+    const iCalm = q.findIndex((r) => r.id === calm.id);
+    assert.ok(iFlagged >= 0 && iCalm >= 0, "both cases must appear in the queue");
+    assert.ok(iFlagged < iCalm, "an escalated case must rank above a routine one");
+    assert.equal(q[iFlagged].escalated, true);
+    assert.equal(q[iCalm].escalated, false);
+  });
+
   test("audit history is tenant-scoped and ordered", async () => {
     const s = await db.createSession({ tenantId: tenantA, patientRef: "Patient/a13" });
     await db.recordAudit({

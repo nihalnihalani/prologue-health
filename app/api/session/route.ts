@@ -110,6 +110,7 @@ export async function GET(req: Request) {
           locale: d.locale,
           updatedAt: d.updatedAt,
           version: d.version,
+          reason: d.map?.patient?.appointment?.reason ?? null,
           urgency: d.map?.escalation?.severity ?? null,
           escalationRule: d.map?.escalation?.ruleId ?? null,
           itemCount: d.map?.items?.length ?? 0,
@@ -143,6 +144,36 @@ export async function GET(req: Request) {
   if (!session) {
     // Memory lost it (restart, or a different instance). Durable storage is the
     // reason that is now recoverable instead of terminal.
+    //
+    // This also covers the NO-ID case: after a restart the in-process store is
+    // empty, so "latest" used to return null while durable storage still held
+    // every session. The clinician view then silently fell back to localStorage
+    // and reported itself as LOCAL ONLY — showing a real queue beside a casefile
+    // loaded from the browser. Falling back to the most recent durable session
+    // keeps the rail and the open case describing the same world.
+    if (!id) {
+      const rows = await loadQueue();
+      const newest = (rows ?? [])
+        .filter((r) => r.map)
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+      if (newest) {
+        return NextResponse.json({
+          mode: runtimeMode(),
+          source: "durable",
+          session: {
+            id: newest.externalId ?? newest.id,
+            patientId: newest.patientRef,
+            state: newest.state,
+            locale: newest.locale,
+            updatedAt: newest.updatedAt,
+            version: newest.version,
+            assignedTo: null,
+          },
+          map: newest.map,
+        });
+      }
+    }
+
     if (id) {
       const d = await loadSession(id);
       if (d) {
@@ -157,8 +188,12 @@ export async function GET(req: Request) {
             updatedAt: d.updatedAt,
             version: d.version,
             assignedTo: null,
-            map: d.map,
           },
+          // `map` is a SIBLING of `session`, matching every other branch. Nested
+          // inside, the client's `j.map` check missed and it silently fell back
+          // to localStorage — so selecting a case from the rail would quietly
+          // show browser-cached data instead of the case that was clicked.
+          map: d.map,
         });
       }
     }
